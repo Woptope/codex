@@ -18,6 +18,7 @@ pub use codex_core::connectors::list_cached_accessible_connectors_from_mcp_tools
 pub use codex_core::connectors::with_app_enabled_state;
 use codex_core::plugins::AppConnectorId;
 use codex_core::plugins::PluginsManager;
+use codex_features::Feature;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
 use codex_login::default_client::originator;
@@ -137,7 +138,12 @@ fn all_connectors_cache_key(config: &Config, auth: &CodexAuth) -> AllConnectorsC
 
 async fn plugin_apps_for_config(config: &Config) -> Vec<codex_core::plugins::AppConnectorId> {
     PluginsManager::new(config.codex_home.to_path_buf())
-        .plugins_for_config(config)
+        .plugins_for_config(
+            &config.config_layer_stack,
+            config.features.enabled(Feature::Plugins),
+            config.features.enabled(Feature::RemotePlugin),
+            config.features.enabled(Feature::PluginHooks),
+        )
         .await
         .effective_apps()
 }

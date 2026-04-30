@@ -2,6 +2,7 @@ use super::*;
 use crate::error_code::internal_error;
 use crate::error_code::invalid_request;
 use codex_app_server_protocol::PluginInstallPolicy;
+use codex_core::config::edit::ConfigEditsBuilder;
 
 impl CodexMessageProcessor {
     pub(super) async fn plugin_list(
@@ -37,18 +38,24 @@ impl CodexMessageProcessor {
         {
             return Ok(empty_response());
         }
-        plugins_manager.maybe_start_plugin_list_background_tasks_for_config(
-            &config,
+        plugins_manager.maybe_start_plugin_list_background_tasks(
+            config.features.enabled(Feature::Plugins),
+            config.features.enabled(Feature::RemotePlugin),
+            config.chatgpt_base_url.clone(),
             auth.clone(),
             &roots,
             Some(self.effective_plugins_changed_callback(config.clone())),
         );
 
-        let config_for_marketplace_listing = config.clone();
+        let config_layer_stack_for_marketplace_listing = config.config_layer_stack.clone();
+        let plugins_enabled_for_marketplace_listing = config.features.enabled(Feature::Plugins);
         let plugins_manager_for_marketplace_listing = plugins_manager.clone();
         let (mut data, marketplace_load_errors) = match tokio::task::spawn_blocking(move || {
-            let outcome = plugins_manager_for_marketplace_listing
-                .list_marketplaces_for_config(&config_for_marketplace_listing, &roots)?;
+            let outcome = plugins_manager_for_marketplace_listing.list_marketplaces_for_config(
+                &config_layer_stack_for_marketplace_listing,
+                plugins_enabled_for_marketplace_listing,
+                &roots,
+            )?;
             Ok::<
                 (
                     Vec<PluginMarketplaceEntry>,
@@ -145,7 +152,11 @@ impl CodexMessageProcessor {
             .any(|marketplace| marketplace.name == OPENAI_CURATED_MARKETPLACE_NAME)
         {
             match plugins_manager
-                .featured_plugin_ids_for_config(&config, auth.as_ref())
+                .featured_plugin_ids(
+                    config.features.enabled(Feature::Plugins),
+                    &config.chatgpt_base_url,
+                    auth.as_ref(),
+                )
                 .await
             {
                 Ok(featured_plugin_ids) => featured_plugin_ids,
@@ -209,7 +220,11 @@ impl CodexMessageProcessor {
                     marketplace_path,
                 };
                 let outcome = plugins_manager
-                    .read_plugin_for_config(&config, &request)
+                    .read_plugin_for_config(
+                        &config.config_layer_stack,
+                        config.features.enabled(Feature::Plugins),
+                        &request,
+                    )
                     .await
                     .map_err(|err| Self::marketplace_error(err, "read plugin details"))?;
                 let environment_manager = self.thread_manager.environment_manager();
@@ -465,6 +480,14 @@ impl CodexMessageProcessor {
             .install_plugin(request)
             .await
             .map_err(Self::plugin_install_error)?;
+        let installed_plugin_id = result.plugin_id.as_key();
+        ConfigEditsBuilder::new(config.codex_home.as_path())
+            .set_plugin_enabled(&installed_plugin_id, /*enabled*/ true)
+            .apply()
+            .await
+            .map_err(|err| {
+                internal_error(format!("failed to persist installed plugin config: {err}"))
+            })?;
         let config = match self.load_latest_config(config_cwd).await {
             Ok(config) => config,
             Err(err) => {
@@ -489,7 +512,7 @@ impl CodexMessageProcessor {
             .plugin_apps_needing_auth_for_install(
                 &config,
                 auth.as_ref().is_some_and(CodexAuth::is_chatgpt_auth),
-                &result.plugin_id.as_key(),
+                &installed_plugin_id,
                 &plugin_apps,
             )
             .await;
@@ -570,7 +593,9 @@ impl CodexMessageProcessor {
         self.thread_manager
             .plugins_manager()
             .maybe_start_remote_installed_plugins_cache_refresh_after_mutation(
-                &config,
+                config.features.enabled(Feature::Plugins),
+                config.features.enabled(Feature::RemotePlugin),
+                config.chatgpt_base_url.clone(),
                 auth.clone(),
                 Some(self.effective_plugins_changed_callback(config.clone())),
             );
@@ -688,9 +713,14 @@ impl CodexMessageProcessor {
         let plugins_manager = self.thread_manager.plugins_manager();
 
         plugins_manager
-            .uninstall_plugin(plugin_id)
+            .uninstall_plugin(plugin_id.clone())
             .await
             .map_err(Self::plugin_uninstall_error)?;
+        ConfigEditsBuilder::new(self.config.codex_home.as_path())
+            .clear_plugin(&plugin_id)
+            .apply()
+            .await
+            .map_err(|err| internal_error(format!("failed to clear plugin config: {err}")))?;
         match self.load_latest_config(/*fallback_cwd*/ None).await {
             Ok(config) => self.on_effective_plugins_changed(config),
             Err(err) => {
@@ -712,9 +742,6 @@ impl CodexMessageProcessor {
             CorePluginInstallError::Marketplace(err) => {
                 Self::marketplace_error(err, "install plugin")
             }
-            CorePluginInstallError::Config(err) => {
-                internal_error(format!("failed to persist installed plugin config: {err}"))
-            }
             CorePluginInstallError::Remote(err) => {
                 internal_error(format!("failed to enable remote plugin: {err}"))
             }
@@ -733,9 +760,6 @@ impl CodexMessageProcessor {
         }
 
         match err {
-            CorePluginUninstallError::Config(err) => {
-                internal_error(format!("failed to clear plugin config: {err}"))
-            }
             CorePluginUninstallError::Remote(err) => {
                 internal_error(format!("failed to uninstall remote plugin: {err}"))
             }
@@ -798,7 +822,9 @@ impl CodexMessageProcessor {
                 self.on_effective_plugins_changed(config.clone());
             }
             plugins_manager.maybe_start_remote_installed_plugins_cache_refresh_after_mutation(
-                &config,
+                config.features.enabled(Feature::Plugins),
+                config.features.enabled(Feature::RemotePlugin),
+                config.chatgpt_base_url.clone(),
                 auth.clone(),
                 Some(self.effective_plugins_changed_callback(config.clone())),
             );

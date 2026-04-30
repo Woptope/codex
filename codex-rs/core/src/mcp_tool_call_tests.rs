@@ -13,6 +13,7 @@ use codex_config::types::ApprovalsReviewer;
 use codex_config::types::AppsConfigToml;
 use codex_config::types::McpServerConfig;
 use codex_config::types::McpServerToolConfig;
+use codex_features::Feature;
 use codex_hooks::Hooks;
 use codex_hooks::HooksConfig;
 use codex_model_provider::create_model_provider;
@@ -1594,7 +1595,12 @@ enabled = true
     session
         .services
         .plugins_manager
-        .plugins_for_config(&initial_config)
+        .plugins_for_config(
+            &initial_config.config_layer_stack,
+            initial_config.features.enabled(Feature::Plugins),
+            initial_config.features.enabled(Feature::RemotePlugin),
+            initial_config.features.enabled(Feature::PluginHooks),
+        )
         .await;
     std::fs::write(
         codex_home.join(CONFIG_TOML_FILE),

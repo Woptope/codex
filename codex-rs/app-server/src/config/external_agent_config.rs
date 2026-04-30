@@ -1,6 +1,7 @@
 use codex_config::types::PluginConfig;
 use codex_core::config::Config;
 use codex_core::config::ConfigBuilder;
+use codex_core::config::edit::ConfigEditsBuilder;
 use codex_core::plugins::PluginId;
 use codex_core::plugins::PluginInstallRequest;
 use codex_core::plugins::PluginsManager;
@@ -20,6 +21,7 @@ use codex_external_agent_migration::missing_command_names;
 use codex_external_agent_migration::missing_subagent_names;
 use codex_external_agent_sessions::ExternalAgentSessionMigration;
 use codex_external_agent_sessions::detect_recent_sessions;
+use codex_features::Feature;
 use codex_protocol::protocol::Product;
 use serde_json::Value as JsonValue;
 use std::collections::BTreeMap;
@@ -757,9 +759,16 @@ impl ExternalAgentConfigService {
                     })
                     .await
                 {
-                    Ok(_) => outcome
-                        .succeeded_plugin_ids
-                        .push(format!("{plugin_name}@{marketplace_name}")),
+                    Ok(result) => match ConfigEditsBuilder::new(self.codex_home.as_path())
+                        .set_plugin_enabled(&result.plugin_id.as_key(), /*enabled*/ true)
+                        .apply()
+                        .await
+                    {
+                        Ok(()) => outcome.succeeded_plugin_ids.push(result.plugin_id.as_key()),
+                        Err(_) => outcome
+                            .failed_plugin_ids
+                            .push(format!("{plugin_name}@{marketplace_name}")),
+                    },
                     Err(_) => outcome
                         .failed_plugin_ids
                         .push(format!("{plugin_name}@{marketplace_name}")),
@@ -1147,7 +1156,11 @@ fn configured_marketplace_plugins(
     plugins_manager: &PluginsManager,
 ) -> io::Result<BTreeMap<String, HashSet<String>>> {
     let marketplaces = plugins_manager
-        .list_marketplaces_for_config(config, &[])
+        .list_marketplaces_for_config(
+            &config.config_layer_stack,
+            config.features.enabled(Feature::Plugins),
+            &[],
+        )
         .map_err(|err| {
             invalid_data_error(format!("failed to list configured marketplaces: {err}"))
         })?;

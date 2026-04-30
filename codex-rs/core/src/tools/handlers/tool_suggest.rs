@@ -2,6 +2,7 @@ use std::collections::HashSet;
 
 use codex_app_server_protocol::AppInfo;
 use codex_config::types::ToolSuggestDisabledTool;
+use codex_features::Feature;
 use codex_mcp::CODEX_APPS_MCP_SERVER_NAME;
 use codex_rmcp_client::ElicitationAction;
 use codex_rmcp_client::ElicitationResponse;
@@ -317,7 +318,11 @@ fn verified_plugin_suggestion_completed(
     plugins_manager: &crate::plugins::PluginsManager,
 ) -> bool {
     plugins_manager
-        .list_marketplaces_for_config(config, &[])
+        .list_marketplaces_for_config(
+            &config.config_layer_stack,
+            config.features.enabled(Feature::Plugins),
+            &[],
+        )
         .ok()
         .into_iter()
         .flat_map(|outcome| outcome.marketplaces)

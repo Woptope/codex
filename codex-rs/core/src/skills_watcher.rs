@@ -8,6 +8,8 @@ use tokio::runtime::Handle;
 use tokio::sync::broadcast;
 use tracing::warn;
 
+use codex_features::Feature;
+
 use crate::SkillsManager;
 use crate::config::Config;
 use crate::file_watcher::FileWatcher;
@@ -61,7 +63,14 @@ impl SkillsWatcher {
         plugins_manager: &PluginsManager,
         fs: Option<Arc<dyn codex_exec_server::ExecutorFileSystem>>,
     ) -> WatchRegistration {
-        let plugin_outcome = plugins_manager.plugins_for_config(config).await;
+        let plugin_outcome = plugins_manager
+            .plugins_for_config(
+                &config.config_layer_stack,
+                config.features.enabled(Feature::Plugins),
+                config.features.enabled(Feature::RemotePlugin),
+                config.features.enabled(Feature::PluginHooks),
+            )
+            .await;
         let effective_skill_roots = plugin_outcome.effective_skill_roots();
         let skills_input = skills_load_input_from_config(config, effective_skill_roots);
         let roots = skills_manager

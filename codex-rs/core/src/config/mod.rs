@@ -1000,7 +1000,14 @@ impl Config {
         &self,
         plugins_manager: &crate::plugins::PluginsManager,
     ) -> McpConfig {
-        let loaded_plugins = plugins_manager.plugins_for_config(self).await;
+        let loaded_plugins = plugins_manager
+            .plugins_for_config(
+                &self.config_layer_stack,
+                self.features.enabled(Feature::Plugins),
+                self.features.enabled(Feature::RemotePlugin),
+                self.features.enabled(Feature::PluginHooks),
+            )
+            .await;
         let mut configured_mcp_servers = self.mcp_servers.get().clone();
         for plugin in loaded_plugins
             .plugins()

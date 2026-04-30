@@ -475,7 +475,14 @@ impl Codex {
         let fs = environment
             .as_ref()
             .map(|environment| environment.get_filesystem());
-        let plugin_outcome = plugins_manager.plugins_for_config(&config).await;
+        let plugin_outcome = plugins_manager
+            .plugins_for_config(
+                &config.config_layer_stack,
+                config.features.enabled(Feature::Plugins),
+                config.features.enabled(Feature::RemotePlugin),
+                config.features.enabled(Feature::PluginHooks),
+            )
+            .await;
         let effective_skill_roots = plugin_outcome.effective_skill_roots();
         let skills_input = skills_load_input_from_config(&config, effective_skill_roots);
         let loaded_skills = skills_manager.skills_for_config(&skills_input, fs).await;
@@ -2666,7 +2673,12 @@ impl Session {
         let loaded_plugins = self
             .services
             .plugins_manager
-            .plugins_for_config(&turn_context.config)
+            .plugins_for_config(
+                &turn_context.config.config_layer_stack,
+                turn_context.config.features.enabled(Feature::Plugins),
+                turn_context.config.features.enabled(Feature::RemotePlugin),
+                turn_context.config.features.enabled(Feature::PluginHooks),
+            )
             .await;
         if let Some(plugin_instructions) =
             AvailablePluginsInstructions::from_plugins(loaded_plugins.capability_summaries())
@@ -3362,7 +3374,14 @@ async fn build_hooks_for_config(
     let _ = hook_shell_argv.pop();
     let plugin_hooks_enabled = config.features.enabled(Feature::PluginHooks);
     let (plugin_hook_sources, plugin_hook_load_warnings) = if plugin_hooks_enabled {
-        let plugin_outcome = plugins_manager.plugins_for_config(config).await;
+        let plugin_outcome = plugins_manager
+            .plugins_for_config(
+                &config.config_layer_stack,
+                config.features.enabled(Feature::Plugins),
+                config.features.enabled(Feature::RemotePlugin),
+                config.features.enabled(Feature::PluginHooks),
+            )
+            .await;
         (
             plugin_outcome.effective_plugin_hook_sources(),
             plugin_outcome.effective_plugin_hook_warnings(),

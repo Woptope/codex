@@ -313,8 +313,11 @@ impl MessageProcessor {
                 codex_message_processor.effective_plugins_changed_callback((*config).clone());
             thread_manager
                 .plugins_manager()
-                .maybe_start_plugin_startup_tasks_for_config(
-                    &config,
+                .maybe_start_plugin_startup_tasks(
+                    config.config_layer_stack.clone(),
+                    config.features.enabled(Feature::Plugins),
+                    config.features.enabled(Feature::RemotePlugin),
+                    config.chatgpt_base_url.clone(),
                     auth_manager.clone(),
                     Some(on_effective_plugins_changed),
                 );

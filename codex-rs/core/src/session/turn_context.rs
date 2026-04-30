@@ -696,7 +696,12 @@ impl Session {
         let plugin_outcome = self
             .services
             .plugins_manager
-            .plugins_for_config(&per_turn_config)
+            .plugins_for_config(
+                &per_turn_config.config_layer_stack,
+                per_turn_config.features.enabled(Feature::Plugins),
+                per_turn_config.features.enabled(Feature::RemotePlugin),
+                per_turn_config.features.enabled(Feature::PluginHooks),
+            )
             .await;
         let effective_skill_roots = plugin_outcome.effective_skill_roots();
         let skills_input = skills_load_input_from_config(&per_turn_config, effective_skill_roots);

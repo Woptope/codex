@@ -1,4 +1,5 @@
 use super::*;
+use crate::config::edit::ConfigEditsBuilder;
 use crate::plugins::PluginInstallRequest;
 use crate::plugins::PluginsManager;
 use crate::plugins::test_support::load_plugins_config;
@@ -48,6 +49,11 @@ async fn verified_plugin_suggestion_completed_requires_installed_plugin() {
         })
         .await
         .expect("plugin should install");
+    ConfigEditsBuilder::new(codex_home.path())
+        .set_plugin_enabled("sample@openai-curated", /*enabled*/ true)
+        .apply()
+        .await
+        .expect("plugin config should persist");
 
     let refreshed_config = load_plugins_config(codex_home.path()).await;
     assert!(verified_plugin_suggestion_completed(

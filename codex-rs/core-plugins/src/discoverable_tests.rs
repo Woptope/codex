@@ -1,15 +1,19 @@
 use super::*;
-use crate::plugins::PluginInstallRequest;
-use crate::plugins::test_support::load_plugins_config;
-use crate::plugins::test_support::write_curated_plugin;
-use crate::plugins::test_support::write_curated_plugin_sha;
-use crate::plugins::test_support::write_file;
-use crate::plugins::test_support::write_openai_curated_marketplace;
-use crate::plugins::test_support::write_plugins_feature_config;
-use codex_core_plugins::startup_sync::curated_plugins_repo_path;
+use crate::manager::PluginInstallRequest;
+use crate::startup_sync::curated_plugins_repo_path;
+use codex_app_server_protocol::ConfigLayerSource;
+use codex_config::CONFIG_TOML_FILE;
+use codex_config::ConfigLayerEntry;
+use codex_config::ConfigLayerStack;
+use codex_config::ConfigRequirements;
+use codex_config::ConfigRequirementsToml;
+use codex_config::config_toml::ConfigToml;
+use codex_config::types::ToolSuggestConfig;
 use codex_tools::DiscoverablePluginInfo;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use pretty_assertions::assert_eq;
+use std::fs;
+use std::path::Path;
 use tempfile::tempdir;
 use tracing::Level;
 use tracing_subscriber::fmt::format::FmtSpan;
@@ -22,10 +26,12 @@ async fn list_tool_suggest_discoverable_plugins_returns_uninstalled_curated_plug
     write_openai_curated_marketplace(&curated_root, &["sample", "slack"]);
     write_plugins_feature_config(codex_home.path());
 
-    let config = load_plugins_config(codex_home.path()).await;
-    let discoverable_plugins = list_tool_suggest_discoverable_plugins(&config)
-        .await
-        .unwrap();
+    let discoverable_plugins = list_tool_suggest_discoverable_plugins_for_test(
+        codex_home.path(),
+        /*plugins_enabled*/ true,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(
         discoverable_plugins,
@@ -105,7 +111,7 @@ async fn list_tool_suggest_discoverable_plugins_deduplicates_allowlisted_configu
     );
     write_curated_plugin(&marketplace_root, plugin_name);
     write_file(
-        &codex_home.path().join(crate::config::CONFIG_TOML_FILE),
+        &codex_home.path().join(CONFIG_TOML_FILE),
         &format!(
             r#"[features]
 plugins = true
@@ -120,10 +126,12 @@ discoverables = [{{ type = "plugin", id = "{plugin_id}" }}]
         ),
     );
 
-    let config = load_plugins_config(codex_home.path()).await;
-    let discoverable_plugins = list_tool_suggest_discoverable_plugins(&config)
-        .await
-        .unwrap();
+    let discoverable_plugins = list_tool_suggest_discoverable_plugins_for_test(
+        codex_home.path(),
+        /*plugins_enabled*/ true,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(discoverable_plugins.len(), 1);
     assert_eq!(discoverable_plugins[0].id, plugin_id);
@@ -159,7 +167,7 @@ async fn list_tool_suggest_discoverable_plugins_ignores_missing_allowlisted_plug
         ),
     );
     write_file(
-        &codex_home.path().join(crate::config::CONFIG_TOML_FILE),
+        &codex_home.path().join(CONFIG_TOML_FILE),
         &format!(
             r#"[features]
 plugins = true
@@ -171,10 +179,12 @@ source = "/tmp/{marketplace_name}"
         ),
     );
 
-    let config = load_plugins_config(codex_home.path()).await;
-    let discoverable_plugins = list_tool_suggest_discoverable_plugins(&config)
-        .await
-        .unwrap();
+    let discoverable_plugins = list_tool_suggest_discoverable_plugins_for_test(
+        codex_home.path(),
+        /*plugins_enabled*/ true,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(discoverable_plugins.len(), 1);
     assert_eq!(discoverable_plugins[0].id, "slack@openai-curated");
@@ -186,16 +196,18 @@ async fn list_tool_suggest_discoverable_plugins_returns_empty_when_plugins_featu
     let curated_root = curated_plugins_repo_path(codex_home.path());
     write_openai_curated_marketplace(&curated_root, &["slack"]);
     write_file(
-        &codex_home.path().join(crate::config::CONFIG_TOML_FILE),
+        &codex_home.path().join(CONFIG_TOML_FILE),
         r#"[features]
 plugins = false
 "#,
     );
 
-    let config = load_plugins_config(codex_home.path()).await;
-    let discoverable_plugins = list_tool_suggest_discoverable_plugins(&config)
-        .await
-        .unwrap();
+    let discoverable_plugins = list_tool_suggest_discoverable_plugins_for_test(
+        codex_home.path(),
+        /*plugins_enabled*/ false,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(discoverable_plugins, Vec::<DiscoverablePluginInfo>::new());
 }
@@ -214,10 +226,12 @@ async fn list_tool_suggest_discoverable_plugins_normalizes_description() {
 }"#,
     );
 
-    let config = load_plugins_config(codex_home.path()).await;
-    let discoverable_plugins = list_tool_suggest_discoverable_plugins(&config)
-        .await
-        .unwrap();
+    let discoverable_plugins = list_tool_suggest_discoverable_plugins_for_test(
+        codex_home.path(),
+        /*plugins_enabled*/ true,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(
         discoverable_plugins,
@@ -240,7 +254,7 @@ async fn list_tool_suggest_discoverable_plugins_omits_installed_curated_plugins(
     write_curated_plugin_sha(codex_home.path());
     write_plugins_feature_config(codex_home.path());
 
-    PluginsManager::new(codex_home.path().to_path_buf())
+    crate::manager::PluginsManager::new(codex_home.path().to_path_buf())
         .install_plugin(PluginInstallRequest {
             plugin_name: "slack".to_string(),
             marketplace_path: AbsolutePathBuf::try_from(
@@ -250,11 +264,22 @@ async fn list_tool_suggest_discoverable_plugins_omits_installed_curated_plugins(
         })
         .await
         .expect("plugin should install");
+    write_file(
+        &codex_home.path().join(CONFIG_TOML_FILE),
+        r#"[features]
+plugins = true
 
-    let refreshed_config = load_plugins_config(codex_home.path()).await;
-    let discoverable_plugins = list_tool_suggest_discoverable_plugins(&refreshed_config)
-        .await
-        .unwrap();
+[plugins."slack@openai-curated"]
+enabled = true
+"#,
+    );
+
+    let discoverable_plugins = list_tool_suggest_discoverable_plugins_for_test(
+        codex_home.path(),
+        /*plugins_enabled*/ true,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(discoverable_plugins, Vec::<DiscoverablePluginInfo>::new());
 }
@@ -265,7 +290,7 @@ async fn list_tool_suggest_discoverable_plugins_omits_disabled_tool_suggestions(
     let curated_root = curated_plugins_repo_path(codex_home.path());
     write_openai_curated_marketplace(&curated_root, &["slack"]);
     write_file(
-        &codex_home.path().join(crate::config::CONFIG_TOML_FILE),
+        &codex_home.path().join(CONFIG_TOML_FILE),
         r#"[features]
 plugins = true
 
@@ -276,10 +301,12 @@ disabled_tools = [
 "#,
     );
 
-    let config = load_plugins_config(codex_home.path()).await;
-    let discoverable_plugins = list_tool_suggest_discoverable_plugins(&config)
-        .await
-        .unwrap();
+    let discoverable_plugins = list_tool_suggest_discoverable_plugins_for_test(
+        codex_home.path(),
+        /*plugins_enabled*/ true,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(discoverable_plugins, Vec::<DiscoverablePluginInfo>::new());
 }
@@ -290,7 +317,7 @@ async fn list_tool_suggest_discoverable_plugins_includes_configured_plugin_ids()
     let curated_root = curated_plugins_repo_path(codex_home.path());
     write_openai_curated_marketplace(&curated_root, &["sample"]);
     write_file(
-        &codex_home.path().join(crate::config::CONFIG_TOML_FILE),
+        &codex_home.path().join(CONFIG_TOML_FILE),
         r#"[features]
 plugins = true
 
@@ -299,10 +326,12 @@ discoverables = [{ type = "plugin", id = "sample@openai-curated" }]
 "#,
     );
 
-    let config = load_plugins_config(codex_home.path()).await;
-    let discoverable_plugins = list_tool_suggest_discoverable_plugins(&config)
-        .await
-        .unwrap();
+    let discoverable_plugins = list_tool_suggest_discoverable_plugins_for_test(
+        codex_home.path(),
+        /*plugins_enabled*/ true,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(
         discoverable_plugins,
@@ -345,7 +374,6 @@ async fn list_tool_suggest_discoverable_plugins_does_not_reload_marketplace_per_
         );
     }
 
-    let config = load_plugins_config(codex_home.path()).await;
     let buffer: &'static std::sync::Mutex<Vec<u8>> =
         Box::leak(Box::new(std::sync::Mutex::new(Vec::new())));
     let subscriber = tracing_subscriber::fmt()
@@ -357,9 +385,12 @@ async fn list_tool_suggest_discoverable_plugins_does_not_reload_marketplace_per_
         .finish();
     let _guard = tracing::subscriber::set_default(subscriber);
 
-    let discoverable_plugins = list_tool_suggest_discoverable_plugins(&config)
-        .await
-        .unwrap();
+    let discoverable_plugins = list_tool_suggest_discoverable_plugins_for_test(
+        codex_home.path(),
+        /*plugins_enabled*/ true,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(discoverable_plugins.len(), 1);
     assert_eq!(discoverable_plugins[0].id, "slack@openai-curated");
@@ -380,5 +411,143 @@ async fn list_tool_suggest_discoverable_plugins_does_not_reload_marketplace_per_
             .matches("life-science-research/.codex-plugin/plugin.json")
             .count(),
         1
+    );
+}
+
+async fn list_tool_suggest_discoverable_plugins_for_test(
+    codex_home: &Path,
+    plugins_enabled: bool,
+) -> anyhow::Result<Vec<DiscoverablePluginInfo>> {
+    let config_layer_stack = config_layer_stack(codex_home);
+    let tool_suggest = tool_suggest_config(codex_home);
+    list_tool_suggest_discoverable_plugins(
+        codex_home,
+        &config_layer_stack,
+        plugins_enabled,
+        &tool_suggest,
+    )
+    .await
+}
+
+fn config_layer_stack(codex_home: &Path) -> ConfigLayerStack {
+    let config_path = codex_home.join(CONFIG_TOML_FILE);
+    let raw = fs::read_to_string(&config_path).unwrap_or_default();
+    let config = if raw.is_empty() {
+        toml::Value::Table(toml::map::Map::new())
+    } else {
+        toml::from_str(&raw).expect("test config should parse")
+    };
+    ConfigLayerStack::new(
+        vec![ConfigLayerEntry::new(
+            ConfigLayerSource::User {
+                file: AbsolutePathBuf::try_from(config_path).expect("absolute config path"),
+            },
+            config,
+        )],
+        ConfigRequirements::default(),
+        ConfigRequirementsToml::default(),
+    )
+    .expect("config layer stack should load")
+}
+
+fn tool_suggest_config(codex_home: &Path) -> ToolSuggestConfig {
+    let raw = fs::read_to_string(codex_home.join(CONFIG_TOML_FILE)).unwrap_or_default();
+    if raw.is_empty() {
+        return ToolSuggestConfig::default();
+    }
+    toml::from_str::<ConfigToml>(&raw)
+        .expect("test config should parse")
+        .tool_suggest
+        .unwrap_or_default()
+}
+
+fn write_file(path: &Path, contents: &str) {
+    fs::create_dir_all(path.parent().expect("file should have a parent")).unwrap();
+    fs::write(path, contents).unwrap();
+}
+
+fn write_curated_plugin(root: &Path, plugin_name: &str) {
+    let plugin_root = root.join("plugins").join(plugin_name);
+    write_file(
+        &plugin_root.join(".codex-plugin/plugin.json"),
+        &format!(
+            r#"{{
+  "name": "{plugin_name}",
+  "description": "Plugin that includes skills, MCP servers, and app connectors"
+}}"#
+        ),
+    );
+    write_file(
+        &plugin_root.join("skills/SKILL.md"),
+        "---\nname: sample\ndescription: sample\n---\n",
+    );
+    write_file(
+        &plugin_root.join(".mcp.json"),
+        r#"{
+  "mcpServers": {
+    "sample-docs": {
+      "type": "http",
+      "url": "https://sample.example/mcp"
+    }
+  }
+}"#,
+    );
+    write_file(
+        &plugin_root.join(".app.json"),
+        r#"{
+  "apps": {
+    "calendar": {
+      "id": "connector_calendar"
+    }
+  }
+}"#,
+    );
+}
+
+fn write_openai_curated_marketplace(root: &Path, plugin_names: &[&str]) {
+    let plugins = plugin_names
+        .iter()
+        .map(|plugin_name| {
+            format!(
+                r#"{{
+      "name": "{plugin_name}",
+      "source": {{
+        "source": "local",
+        "path": "./plugins/{plugin_name}"
+      }}
+    }}"#
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",\n");
+    write_file(
+        &root.join(".agents/plugins/marketplace.json"),
+        &format!(
+            r#"{{
+  "name": "{OPENAI_CURATED_MARKETPLACE_NAME}",
+  "plugins": [
+{plugins}
+  ]
+}}"#
+        ),
+    );
+    for plugin_name in plugin_names {
+        write_curated_plugin(root, plugin_name);
+    }
+}
+
+fn write_curated_plugin_sha(codex_home: &Path) {
+    write_file(
+        &codex_home.join(".tmp/plugins.sha"),
+        "0123456789abcdef0123456789abcdef01234567\n",
+    );
+}
+
+fn write_plugins_feature_config(codex_home: &Path) {
+    write_file(
+        &codex_home.join(CONFIG_TOML_FILE),
+        r#"[features]
+plugins = true
+"#,
     );
 }

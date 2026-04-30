@@ -5,6 +5,7 @@ use crate::config::ConfigBuilder;
 use crate::plugins::PluginsManager;
 use crate::skills_load_input_from_config;
 use codex_config::ConfigLayerStackOrdering;
+use codex_features::Feature;
 use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::config_types::Verbosity;
 use codex_protocol::openai_models::ReasoningEffort;
@@ -655,7 +656,14 @@ enabled = false
     let plugins_manager = Arc::new(PluginsManager::new(home.path().to_path_buf()));
     let skills_manager =
         SkillsManager::new(home.path().abs(), /*bundled_skills_enabled*/ true);
-    let plugin_outcome = plugins_manager.plugins_for_config(&config).await;
+    let plugin_outcome = plugins_manager
+        .plugins_for_config(
+            &config.config_layer_stack,
+            config.features.enabled(Feature::Plugins),
+            config.features.enabled(Feature::RemotePlugin),
+            config.features.enabled(Feature::PluginHooks),
+        )
+        .await;
     let effective_skill_roots = plugin_outcome.effective_skill_roots();
     let skills_input = skills_load_input_from_config(&config, effective_skill_roots);
     let outcome = skills_manager

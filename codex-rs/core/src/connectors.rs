@@ -14,6 +14,7 @@ pub use codex_app_server_protocol::AppInfo;
 pub use codex_app_server_protocol::AppMetadata;
 use codex_connectors::AllConnectorsCacheKey;
 use codex_connectors::DirectoryListResponse;
+use codex_core_plugins::discoverable::list_tool_suggest_discoverable_plugins;
 use codex_exec_server::EnvironmentManager;
 use codex_exec_server::EnvironmentManagerArgs;
 use codex_exec_server::ExecServerRuntimePaths;
@@ -27,7 +28,6 @@ use tracing::warn;
 use crate::config::Config;
 use crate::mcp::McpManager;
 use crate::plugins::PluginsManager;
-use crate::plugins::list_tool_suggest_discoverable_plugins;
 use crate::session::INITIAL_SUBMIT_ID;
 use codex_config::AppsRequirementsToml;
 use codex_config::types::AppToolApproval;
@@ -131,10 +131,15 @@ pub(crate) async fn list_tool_suggest_discoverable_tools_with_auth(
         )
         .into_iter()
         .map(DiscoverableTool::from);
-    let discoverable_plugins = list_tool_suggest_discoverable_plugins(config)
-        .await?
-        .into_iter()
-        .map(DiscoverableTool::from);
+    let discoverable_plugins = list_tool_suggest_discoverable_plugins(
+        config.codex_home.as_path(),
+        &config.config_layer_stack,
+        config.features.enabled(Feature::Plugins),
+        &config.tool_suggest,
+    )
+    .await?
+    .into_iter()
+    .map(DiscoverableTool::from);
     Ok(discoverable_connectors
         .chain(discoverable_plugins)
         .collect())
@@ -404,7 +409,12 @@ fn write_cached_accessible_connectors(
 
 async fn tool_suggest_connector_ids(config: &Config) -> HashSet<String> {
     let mut connector_ids = PluginsManager::new(config.codex_home.to_path_buf())
-        .plugins_for_config(config)
+        .plugins_for_config(
+            &config.config_layer_stack,
+            config.features.enabled(Feature::Plugins),
+            config.features.enabled(Feature::RemotePlugin),
+            config.features.enabled(Feature::PluginHooks),
+        )
         .await
         .capability_summaries()
         .iter()

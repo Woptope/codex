@@ -1,5 +1,7 @@
+pub mod discoverable;
 pub mod installed_marketplaces;
 pub mod loader;
+pub mod manager;
 pub mod manifest;
 pub mod marketplace;
 pub mod marketplace_add;
@@ -11,6 +13,8 @@ pub mod remote_legacy;
 pub mod startup_sync;
 pub mod store;
 pub mod toggles;
+
+use codex_config::types::McpServerConfig;
 
 pub const OPENAI_CURATED_MARKETPLACE_NAME: &str = "openai-curated";
 pub const OPENAI_BUNDLED_MARKETPLACE_NAME: &str = "openai-bundled";
@@ -30,3 +34,6 @@ pub const TOOL_SUGGEST_DISCOVERABLE_PLUGIN_ALLOWLIST: &[&str] = &[
     "figma@openai-curated",
     "computer-use@openai-bundled",
 ];
+
+pub type LoadedPlugin = codex_plugin::LoadedPlugin<McpServerConfig>;
+pub type PluginLoadOutcome = codex_plugin::PluginLoadOutcome<McpServerConfig>;

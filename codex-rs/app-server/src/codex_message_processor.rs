@@ -6304,7 +6304,12 @@ impl CodexMessageProcessor {
                 .map_or(&[][..], std::vec::Vec::as_slice);
             let effective_skill_roots = if workspace_codex_plugins_enabled {
                 plugins_manager
-                    .effective_skill_roots_for_layer_stack(&config_layer_stack, &config)
+                    .effective_skill_roots_for_layer_stack(
+                        &config_layer_stack,
+                        config.features.enabled(Feature::Plugins),
+                        config.features.enabled(Feature::RemotePlugin),
+                        config.features.enabled(Feature::PluginHooks),
+                    )
                     .await
             } else {
                 Vec::new()
@@ -6389,7 +6394,8 @@ impl CodexMessageProcessor {
                 plugins_manager
                     .plugins_for_layer_stack(
                         &config.config_layer_stack,
-                        &config,
+                        plugins_enabled,
+                        config.features.enabled(Feature::RemotePlugin),
                         /*plugin_hooks_feature_enabled*/ true,
                     )
                     .await
@@ -6452,10 +6458,11 @@ impl CodexMessageProcessor {
         let config = self.load_latest_config(/*fallback_cwd*/ None).await?;
         let plugins_manager = self.thread_manager.plugins_manager();
         let MarketplaceUpgradeParams { marketplace_name } = params;
+        let config_layer_stack = config.config_layer_stack.clone();
 
         let outcome = tokio::task::spawn_blocking(move || {
             plugins_manager
-                .upgrade_configured_marketplaces_for_config(&config, marketplace_name.as_deref())
+                .upgrade_configured_marketplaces(&config_layer_stack, marketplace_name.as_deref())
         })
         .await
         .map_err(|err| internal_error(format!("failed to upgrade marketplaces: {err}")))?
