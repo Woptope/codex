@@ -1058,7 +1058,8 @@ impl PluginsManager {
 
                 if current_enabled != Some(true) {
                     result.enabled_plugin_ids.push(plugin_key.clone());
-                    config_edits = config_edits.set_plugin_enabled(&plugin_key, true);
+                    config_edits =
+                        config_edits.set_plugin_enabled(&plugin_key, /*enabled*/ true);
                     has_config_edits = true;
                 }
             } else if !additive_only {

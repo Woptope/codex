@@ -102,7 +102,7 @@ enabled = true
     )?;
 
     ConfigEditsBuilder::new(&codex_home)
-        .set_plugin_enabled("linear@openai-curated", true)
+        .set_plugin_enabled("linear@openai-curated", /*enabled*/ true)
         .clear_plugin("gmail@openai-curated")
         .apply()
         .await?;

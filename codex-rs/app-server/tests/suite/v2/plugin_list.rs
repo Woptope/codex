@@ -1186,13 +1186,23 @@ async fn app_server_startup_refreshes_remote_installed_cache_each_process() -> R
     {
         let mut mcp = McpProcess::new_with_plugin_startup_tasks(codex_home.path()).await?;
         timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
-        wait_for_remote_plugin_request_count(&server, "/ps/plugins/installed", 2).await?;
+        wait_for_remote_plugin_request_count(
+            &server,
+            "/ps/plugins/installed",
+            /*expected_count*/ 2,
+        )
+        .await?;
     }
 
     {
         let mut mcp = McpProcess::new_with_plugin_startup_tasks(codex_home.path()).await?;
         timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
-        wait_for_remote_plugin_request_count(&server, "/ps/plugins/installed", 4).await?;
+        wait_for_remote_plugin_request_count(
+            &server,
+            "/ps/plugins/installed",
+            /*expected_count*/ 4,
+        )
+        .await?;
     }
 
     Ok(())

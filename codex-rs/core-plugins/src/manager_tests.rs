@@ -786,7 +786,9 @@ remote_plugin = true
     let server = MockServer::start().await;
     mount_remote_installed_plugin_pages(
         &server,
-        &remote_installed_plugin_json_with_release("linear", true, "2.0.0", None),
+        &remote_installed_plugin_json_with_release(
+            "linear", /*enabled*/ true, "2.0.0", /*bundle_download_url*/ None,
+        ),
         "",
     )
     .await;
@@ -836,8 +838,8 @@ remote_plugin = true
         &server,
         &format!(
             "{},\n{}",
-            remote_installed_plugin_json("linear", true),
-            remote_installed_plugin_json("gmail", false)
+            remote_installed_plugin_json("linear", /*enabled*/ true),
+            remote_installed_plugin_json("gmail", /*enabled*/ false)
         ),
         "",
     )
@@ -938,7 +940,7 @@ async fn remote_installed_plugins_cache_refresh_clears_stale_cache_when_auth_is_
             notification_count_for_callback.fetch_add(1, Ordering::SeqCst);
         })),
     );
-    wait_for_counter(&notification_count, 1).await;
+    wait_for_counter(&notification_count, /*expected*/ 1).await;
 
     let outcome = manager
         .plugins_for_config(

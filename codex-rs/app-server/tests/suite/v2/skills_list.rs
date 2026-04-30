@@ -200,8 +200,10 @@ async fn skills_list_loads_remote_installed_plugin_skills_from_cache() -> Result
       "installation_policy": "AVAILABLE",
       "authentication_policy": "ON_USE",
       "release": {
+        "version": "local",
         "display_name": "Linear",
         "description": "Track work in Linear",
+        "bundle_download_url": "https://example.com/linear.tar.gz",
         "app_ids": [],
         "interface": {},
         "skills": []
@@ -222,8 +224,10 @@ async fn skills_list_loads_remote_installed_plugin_skills_from_cache() -> Result
       "installation_policy": "AVAILABLE",
       "authentication_policy": "ON_USE",
       "release": {
+        "version": "local",
         "display_name": "Linear",
         "description": "Track work in Linear",
+        "bundle_download_url": "https://example.com/linear.tar.gz",
         "app_ids": [],
         "interface": {},
         "skills": []
