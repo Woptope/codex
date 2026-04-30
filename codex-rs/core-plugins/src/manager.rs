@@ -34,8 +34,6 @@ use crate::marketplace_upgrade::upgrade_configured_git_marketplaces;
 use crate::remote::RemoteInstalledPlugin;
 use crate::remote::RemotePluginCatalogError;
 use crate::remote::RemotePluginServiceConfig;
-use crate::remote_bundle::download_and_install_remote_plugin_bundle;
-use crate::remote_bundle::validate_remote_plugin_bundle;
 use crate::remote_legacy::RemotePluginFetchError;
 use crate::remote_legacy::RemotePluginMutationError;
 use crate::remote_startup_sync::RemoteStartupPluginSyncRequest;
@@ -46,7 +44,6 @@ use crate::startup_sync::sync_openai_plugins_repo;
 use crate::store::PluginInstallResult as StorePluginInstallResult;
 use crate::store::PluginStore;
 use crate::store::PluginStoreError;
-use crate::store::validate_plugin_version_segment;
 use codex_config::ConfigEditsBuilder;
 use codex_config::ConfigLayerStack;
 use codex_config::types::PluginConfig;
@@ -1629,14 +1626,16 @@ impl PluginsManager {
                 }
             };
 
-            match self
-                .refresh_remote_installed_plugins_cache(
-                    &request.service_config,
-                    request.auth.as_ref(),
-                )
-                .await
-            {
-                Ok(changed) => {
+            let installed_plugins = crate::remote::fetch_remote_installed_plugins(
+                &request.service_config,
+                request.auth.as_ref(),
+            )
+            .await;
+            match installed_plugins {
+                Ok(installed_plugins) => {
+                    // TODO(remote plugins): reconcile missing or stale local bundles before
+                    // publishing remote installed state as effective local plugin config.
+                    let changed = self.write_remote_installed_plugins_cache(installed_plugins);
                     let should_notify = changed
                         || matches!(
                             request.notify,
@@ -1669,167 +1668,6 @@ impl PluginsManager {
                 }
             }
         }
-    }
-
-    pub(crate) async fn refresh_remote_installed_plugins_cache(
-        &self,
-        service_config: &RemotePluginServiceConfig,
-        auth: Option<&CodexAuth>,
-    ) -> Result<bool, RemotePluginCatalogError> {
-        let installed_plugins =
-            crate::remote::fetch_remote_installed_plugins(service_config, auth).await?;
-        let previous_plugins_by_key = {
-            let cache = match self.remote_installed_plugins_cache.read() {
-                Ok(cache) => cache,
-                Err(err) => err.into_inner(),
-            };
-            cache
-                .as_ref()
-                .map(|plugins| {
-                    plugins
-                        .iter()
-                        .map(|plugin| {
-                            (
-                                (
-                                    plugin.marketplace_name.clone(),
-                                    plugin.id.clone(),
-                                    plugin.name.clone(),
-                                ),
-                                plugin.clone(),
-                            )
-                        })
-                        .collect::<HashMap<_, _>>()
-                })
-                .unwrap_or_default()
-        };
-        let mut bundles_changed = false;
-        let mut publishable_plugins = Vec::new();
-        for plugin in installed_plugins {
-            let previous_plugin = previous_plugins_by_key
-                .get(&(
-                    plugin.marketplace_name.clone(),
-                    plugin.id.clone(),
-                    plugin.name.clone(),
-                ))
-                .cloned();
-            let plugin_id =
-                match PluginId::new(plugin.name.clone(), plugin.marketplace_name.clone()) {
-                    Ok(plugin_id) => plugin_id,
-                    Err(err) => {
-                        warn!(
-                            remote_plugin_id = %plugin.id,
-                            marketplace = %plugin.marketplace_name,
-                            plugin = %plugin.name,
-                            error = %err,
-                            "ignoring remote installed plugin with invalid local plugin id"
-                        );
-                        continue;
-                    }
-                };
-
-            let release_version = plugin
-                .release_version
-                .as_deref()
-                .map(str::trim)
-                .filter(|version| !version.is_empty());
-
-            let Some(release_version) = release_version else {
-                if self.store.active_plugin_root(&plugin_id).is_some() {
-                    publishable_plugins.push(plugin);
-                } else if let Some(mut previous_plugin) = previous_plugin {
-                    previous_plugin.enabled = plugin.enabled;
-                    publishable_plugins.push(previous_plugin);
-                } else {
-                    warn!(
-                        remote_plugin_id = %plugin.id,
-                        marketplace = %plugin.marketplace_name,
-                        plugin = %plugin.name,
-                        "remote installed plugin is missing release metadata and no local bundle is available"
-                    );
-                }
-                continue;
-            };
-
-            if let Err(message) = validate_plugin_version_segment(release_version) {
-                if let Some(mut previous_plugin) = previous_plugin {
-                    previous_plugin.enabled = plugin.enabled;
-                    publishable_plugins.push(previous_plugin);
-                }
-                warn!(
-                    remote_plugin_id = %plugin.id,
-                    marketplace = %plugin.marketplace_name,
-                    plugin = %plugin.name,
-                    version = %release_version,
-                    error = %message,
-                    "ignoring remote installed plugin with invalid release version"
-                );
-                continue;
-            }
-
-            if self.store.active_plugin_version(&plugin_id).as_deref() == Some(release_version) {
-                publishable_plugins.push(plugin);
-                continue;
-            }
-
-            let validated_bundle = match validate_remote_plugin_bundle(
-                &plugin.id,
-                &plugin.marketplace_name,
-                &plugin.name,
-                Some(release_version),
-                plugin.bundle_download_url.as_deref(),
-            ) {
-                Ok(bundle) => bundle,
-                Err(err) => {
-                    if let Some(mut previous_plugin) = previous_plugin {
-                        previous_plugin.enabled = plugin.enabled;
-                        publishable_plugins.push(previous_plugin);
-                    }
-                    warn!(
-                        remote_plugin_id = %plugin.id,
-                        marketplace = %plugin.marketplace_name,
-                        plugin = %plugin.name,
-                        error = %err,
-                        "failed to validate remote installed plugin bundle"
-                    );
-                    continue;
-                }
-            };
-            match download_and_install_remote_plugin_bundle(
-                self.codex_home.clone(),
-                validated_bundle,
-            )
-            .await
-            {
-                Ok(result) => {
-                    bundles_changed = true;
-                    tracing::info!(
-                        plugin = %result.plugin_id.as_key(),
-                        version = %result.plugin_version,
-                        path = %result.installed_path.display(),
-                        "installed remote plugin bundle during installed-plugin refresh"
-                    );
-                    publishable_plugins.push(plugin);
-                }
-                Err(err) => {
-                    if let Some(mut previous_plugin) = previous_plugin {
-                        previous_plugin.enabled = plugin.enabled;
-                        publishable_plugins.push(previous_plugin);
-                    }
-                    warn!(
-                        remote_plugin_id = %plugin.id,
-                        marketplace = %plugin.marketplace_name,
-                        plugin = %plugin.name,
-                        error = %err,
-                        "failed to install remote plugin bundle during installed-plugin refresh"
-                    );
-                }
-            }
-        }
-        let cache_changed = self.write_remote_installed_plugins_cache(publishable_plugins);
-        if bundles_changed {
-            self.clear_enabled_outcome_cache();
-        }
-        Ok(cache_changed || bundles_changed)
     }
 
     fn run_non_curated_plugin_cache_refresh_loop(self: Arc<Self>) {
