@@ -380,7 +380,7 @@ pub struct PluginsManager {
 #[derive(Clone)]
 struct CachedPluginLoadOutcome {
     config_version: String,
-    feature_flags: PluginFeatureFlags,
+    plugin_hooks_enabled: bool,
     outcome: PluginLoadOutcome,
 }
 
@@ -462,7 +462,8 @@ impl PluginsManager {
 
         let config_version = version_for_toml(&config_layer_stack.effective_config());
         if !force_reload
-            && let Some(outcome) = self.cached_enabled_outcome(&config_version, feature_flags)
+            && let Some(outcome) =
+                self.cached_enabled_outcome(&config_version, feature_flags.plugin_hooks_enabled)
         {
             return outcome;
         }
@@ -482,7 +483,7 @@ impl PluginsManager {
         };
         *cache = Some(CachedPluginLoadOutcome {
             config_version,
-            feature_flags,
+            plugin_hooks_enabled: feature_flags.plugin_hooks_enabled,
             outcome: outcome.clone(),
         });
         outcome
@@ -538,20 +539,22 @@ impl PluginsManager {
     fn cached_enabled_outcome(
         &self,
         config_version: &str,
-        feature_flags: PluginFeatureFlags,
+        plugin_hooks_enabled: bool,
     ) -> Option<PluginLoadOutcome> {
         match self.cached_enabled_outcome.read() {
             Ok(cache) => cache
                 .as_ref()
                 .filter(|cached| {
-                    cached.config_version == config_version && cached.feature_flags == feature_flags
+                    cached.config_version == config_version
+                        && cached.plugin_hooks_enabled == plugin_hooks_enabled
                 })
                 .map(|cached| cached.outcome.clone()),
             Err(err) => err
                 .into_inner()
                 .as_ref()
                 .filter(|cached| {
-                    cached.config_version == config_version && cached.feature_flags == feature_flags
+                    cached.config_version == config_version
+                        && cached.plugin_hooks_enabled == plugin_hooks_enabled
                 })
                 .map(|cached| cached.outcome.clone()),
         }

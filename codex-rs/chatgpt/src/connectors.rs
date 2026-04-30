@@ -16,11 +16,11 @@ pub use codex_core::connectors::list_accessible_connectors_from_mcp_tools_with_o
 pub use codex_core::connectors::list_accessible_connectors_from_mcp_tools_with_options_and_status;
 pub use codex_core::connectors::list_cached_accessible_connectors_from_mcp_tools;
 pub use codex_core::connectors::with_app_enabled_state;
-use codex_core_plugins::AppConnectorId;
 use codex_core_plugins::PluginsManager;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
 use codex_login::default_client::originator;
+use codex_plugin::AppConnectorId;
 
 const DIRECTORY_CONNECTORS_TIMEOUT: Duration = Duration::from_secs(60);
 

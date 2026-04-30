@@ -600,41 +600,6 @@ remote_plugin = true
 }
 
 #[tokio::test]
-async fn remote_installed_cache_reloads_when_remote_feature_enablement_changes() {
-    let codex_home = TempDir::new().unwrap();
-    let plugin_base = codex_home
-        .path()
-        .join("plugins/cache/chatgpt-global/linear");
-    write_plugin(&plugin_base, "local", "linear");
-    write_file(
-        &codex_home.path().join(CONFIG_TOML_FILE),
-        r#"[features]
-plugins = true
-remote_plugin = true
-"#,
-    );
-
-    let config = load_config(codex_home.path(), codex_home.path()).await;
-    let manager = PluginsManager::new(codex_home.path().to_path_buf());
-    manager.write_remote_installed_plugins_cache(vec![RemoteInstalledPlugin {
-        marketplace_name: "chatgpt-global".to_string(),
-        id: "plugins~Plugin_linear".to_string(),
-        name: "linear".to_string(),
-        enabled: true,
-    }]);
-
-    let enabled_outcome = manager.plugins_for_test_config(&config).await;
-    assert_eq!(enabled_outcome.plugins().len(), 1);
-
-    let mut feature_flags = config.plugin_feature_flags();
-    feature_flags.remote_plugins_enabled = false;
-    let disabled_outcome =
-        PluginsManager::plugins_for_config(&manager, &config.config_layer_stack, feature_flags)
-            .await;
-    assert_eq!(disabled_outcome, PluginLoadOutcome::default());
-}
-
-#[tokio::test]
 async fn remote_installed_cache_ignores_plugins_missing_local_cache() {
     let codex_home = TempDir::new().unwrap();
     write_file(

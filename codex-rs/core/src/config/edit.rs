@@ -1201,25 +1201,6 @@ impl ConfigEditsBuilder {
         self
     }
 
-    pub fn set_plugin_enabled(mut self, plugin_id: &str, enabled: bool) -> Self {
-        self.edits.push(ConfigEdit::SetPath {
-            segments: vec![
-                "plugins".to_string(),
-                plugin_id.to_string(),
-                "enabled".to_string(),
-            ],
-            value: value(enabled),
-        });
-        self
-    }
-
-    pub fn clear_plugin(mut self, plugin_id: &str) -> Self {
-        self.edits.push(ConfigEdit::ClearPath {
-            segments: vec!["plugins".to_string(), plugin_id.to_string()],
-        });
-        self
-    }
-
     /// Enable or disable a feature flag by key under the `[features]` table.
     ///
     /// Disabling a default-false feature clears the root-scoped key instead of

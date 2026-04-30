@@ -1313,39 +1313,6 @@ model_reasoning_effort = "high"
     assert_eq!(contents, initial_expected);
 }
 
-#[test]
-fn blocking_builder_sets_and_clears_plugin_config() {
-    let tmp = tempdir().expect("tmpdir");
-    let codex_home = tmp.path();
-
-    ConfigEditsBuilder::new(codex_home)
-        .set_plugin_enabled("sample@test", /*enabled*/ true)
-        .set_plugin_enabled("other@test", /*enabled*/ false)
-        .apply_blocking()
-        .expect("persist plugin config");
-
-    ConfigEditsBuilder::new(codex_home)
-        .clear_plugin("sample@test")
-        .apply_blocking()
-        .expect("clear plugin config");
-
-    let raw = std::fs::read_to_string(codex_home.join(CONFIG_TOML_FILE)).expect("read config");
-    let config: TomlValue = toml::from_str(&raw).expect("parse config");
-    let plugins = config
-        .get("plugins")
-        .and_then(TomlValue::as_table)
-        .expect("plugins table should exist");
-    assert!(!plugins.contains_key("sample@test"));
-    assert_eq!(
-        plugins
-            .get("other@test")
-            .and_then(TomlValue::as_table)
-            .and_then(|plugin| plugin.get("enabled"))
-            .and_then(TomlValue::as_bool),
-        Some(false)
-    );
-}
-
 #[tokio::test]
 async fn blocking_set_asynchronous_helpers_available() {
     let tmp = tempdir().expect("tmpdir");
