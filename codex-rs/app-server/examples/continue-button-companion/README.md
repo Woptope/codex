@@ -20,11 +20,6 @@ node scripts/serve.mjs
 Open `http://127.0.0.1:4173`, connect to the websocket URL, then start or
 resume sessions from the companion UI.
 
-The browser does not connect directly to `codex app-server`. Browsers attach an
-`Origin` header to websocket handshakes, and the app-server websocket listener
-rejects those requests. The local Node companion server proxies browser requests
-to app-server, so keep `node scripts/serve.mjs` running while using the UI.
-
 ## Behavior
 
 - The session list is populated only from sessions started or resumed in this

@@ -44,36 +44,44 @@ type PendingRequest = {
 };
 
 export class JsonRpcWebSocketClient {
+  #socket: WebSocket | null = null;
+  #nextId = 1;
+  #pending = new Map<number, PendingRequest>();
   #notificationListeners = new Set<NotificationListener>();
-  #events: EventSource | null = null;
-  #connected = false;
 
   get connected(): boolean {
-    return this.#connected;
+    return this.#socket?.readyState === WebSocket.OPEN;
   }
 
   async connect(url: string): Promise<void> {
     this.close();
-    await postJson("/api/connect", { url });
-    this.#events = new EventSource("/api/events");
-    this.#events.addEventListener("notification", (event) => {
-      const notification = JSON.parse((event as MessageEvent).data) as JsonRpcNotification;
-      for (const listener of this.#notificationListeners) {
-        listener(notification.method, notification.params);
-      }
+
+    const socket = new WebSocket(url);
+    this.#socket = socket;
+    socket.addEventListener("message", (event) => {
+      this.#handleMessage(String(event.data));
     });
-    this.#events.addEventListener("error", () => {
-      this.#connected = false;
+    socket.addEventListener("close", () => {
+      this.#rejectPending(new Error("App-server websocket closed."));
     });
-    this.#connected = true;
+    socket.addEventListener("error", () => {
+      this.#rejectPending(new Error("App-server websocket failed."));
+    });
+
+    await new Promise<void>((resolve, reject) => {
+      socket.addEventListener("open", () => resolve(), { once: true });
+      socket.addEventListener("error", () => reject(new Error("Unable to connect to app-server.")), {
+        once: true,
+      });
+    });
   }
 
   close(): void {
-    if (this.#events !== null) {
-      this.#events.close();
-      this.#events = null;
+    if (this.#socket !== null) {
+      this.#socket.close();
+      this.#socket = null;
     }
-    this.#connected = false;
+    this.#rejectPending(new Error("App-server connection closed."));
   }
 
   onNotification(listener: NotificationListener): () => void {
@@ -84,11 +92,68 @@ export class JsonRpcWebSocketClient {
   }
 
   request(method: string, params?: JsonValue): Promise<JsonValue> {
-    return postJson("/api/request", { method, params });
+    const socket = this.#requireSocket();
+    const id = this.#nextId++;
+    const message: JsonRpcRequest = { id, method };
+    if (params !== undefined) {
+      message.params = params;
+    }
+
+    const promise = new Promise<JsonValue>((resolve, reject) => {
+      this.#pending.set(id, { resolve, reject });
+    });
+    socket.send(JSON.stringify(message));
+    return promise;
   }
 
-  async notify(method: string, params?: JsonValue): Promise<void> {
-    await postJson("/api/notify", { method, params });
+  notify(method: string, params?: JsonValue): void {
+    const socket = this.#requireSocket();
+    const message: JsonRpcNotification = { method };
+    if (params !== undefined) {
+      message.params = params;
+    }
+    socket.send(JSON.stringify(message));
+  }
+
+  #handleMessage(raw: string): void {
+    let message: JsonRpcMessage;
+    try {
+      message = JSON.parse(raw) as JsonRpcMessage;
+    } catch {
+      return;
+    }
+
+    if ("id" in message) {
+      const pending = this.#pending.get(message.id);
+      if (pending === undefined) {
+        return;
+      }
+      this.#pending.delete(message.id);
+      if (message.error !== undefined) {
+        pending.reject(new Error(message.error.message));
+      } else {
+        pending.resolve(message.result ?? {});
+      }
+      return;
+    }
+
+    for (const listener of this.#notificationListeners) {
+      listener(message.method, message.params);
+    }
+  }
+
+  #rejectPending(error: Error): void {
+    for (const pending of this.#pending.values()) {
+      pending.reject(error);
+    }
+    this.#pending.clear();
+  }
+
+  #requireSocket(): WebSocket {
+    if (this.#socket === null || this.#socket.readyState !== WebSocket.OPEN) {
+      throw new Error("App-server websocket is not connected.");
+    }
+    return this.#socket;
   }
 }
 
@@ -113,7 +178,7 @@ export class AppServerSessionClient implements ContinueSessionClient {
         version: "0.1.0",
       },
     });
-    await this.#rpc.notify("initialized");
+    this.#rpc.notify("initialized");
   }
 
   loadTrackedSessions(sessions: CompanionSession[]): void {
@@ -353,20 +418,4 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     window.setTimeout(resolve, ms);
   });
-}
-
-async function postJson(path: string, body: JsonValue): Promise<JsonValue> {
-  const response = await fetch(path, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const payload = (await response.json()) as {
-    result?: JsonValue;
-    error?: string;
-  };
-  if (!response.ok || payload.error !== undefined) {
-    throw new Error(payload.error ?? `Request failed with HTTP ${response.status}.`);
-  }
-  return payload.result ?? {};
 }
