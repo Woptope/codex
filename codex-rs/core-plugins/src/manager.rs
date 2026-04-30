@@ -1083,7 +1083,6 @@ impl PluginsManager {
             if remote_plugins_enabled {
                 start_startup_remote_plugin_sync_once(RemoteStartupPluginSyncRequest {
                     manager: Arc::clone(self),
-                    codex_home: self.codex_home.clone(),
                     plugins_enabled,
                     remote_plugins_enabled,
                     chatgpt_base_url: chatgpt_base_url.clone(),

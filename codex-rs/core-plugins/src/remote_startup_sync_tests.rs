@@ -1,7 +1,6 @@
 use super::*;
 use crate::manager::PluginsManager;
 use crate::remote::REMOTE_GLOBAL_MARKETPLACE_NAME;
-use crate::startup_sync::curated_plugins_repo_path;
 use codex_config::ConfigLayerStack;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
@@ -20,22 +19,11 @@ use wiremock::matchers::method;
 use wiremock::matchers::path;
 use wiremock::matchers::query_param;
 
-const TEST_CURATED_PLUGIN_SHA: &str = "0123456789abcdef0123456789abcdef01234567";
+const LEGACY_STARTUP_REMOTE_PLUGIN_SYNC_MARKER_FILE: &str = ".tmp/app-server-remote-plugin-sync-v1";
 
 fn write_file(path: &Path, contents: &str) {
     std::fs::create_dir_all(path.parent().expect("file should have a parent")).unwrap();
     std::fs::write(path, contents).unwrap();
-}
-
-fn write_local_curated_snapshot(codex_home: &Path) {
-    write_file(
-        &curated_plugins_repo_path(codex_home).join(".agents/plugins/marketplace.json"),
-        r#"{"name":"openai-curated","plugins":[]}"#,
-    );
-    write_file(
-        &codex_home.join(".tmp/plugins.sha"),
-        &format!("{TEST_CURATED_PLUGIN_SHA}\n"),
-    );
 }
 
 fn write_cached_plugin(codex_home: &Path, marketplace_name: &str, plugin_name: &str) {
@@ -106,10 +94,14 @@ async fn mount_installed_plugins(server: &MockServer) {
 }
 
 #[tokio::test]
-async fn startup_remote_plugin_sync_writes_marker_and_refreshes_remote_installed_cache() {
+async fn startup_remote_plugin_sync_refreshes_remote_installed_cache() {
     let tmp = tempdir().expect("tempdir");
-    write_local_curated_snapshot(tmp.path());
     write_cached_plugin(tmp.path(), REMOTE_GLOBAL_MARKETPLACE_NAME, "linear");
+    write_file(
+        &tmp.path()
+            .join(LEGACY_STARTUP_REMOTE_PLUGIN_SYNC_MARKER_FILE),
+        "ok\n",
+    );
 
     let server = MockServer::start().await;
     mount_installed_plugins(&server).await;
@@ -122,7 +114,6 @@ async fn startup_remote_plugin_sync_writes_marker_and_refreshes_remote_installed
 
     start_startup_remote_plugin_sync_once(RemoteStartupPluginSyncRequest {
         manager: Arc::clone(&manager),
-        codex_home: tmp.path().to_path_buf(),
         plugins_enabled: true,
         remote_plugins_enabled: true,
         chatgpt_base_url: format!("{}/backend-api/", server.uri()),
@@ -132,17 +123,16 @@ async fn startup_remote_plugin_sync_writes_marker_and_refreshes_remote_installed
         })),
     });
 
-    let marker_path = tmp.path().join(STARTUP_REMOTE_PLUGIN_SYNC_MARKER_FILE);
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            if marker_path.is_file() {
+            if notification_count.load(Ordering::SeqCst) == 1 {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
     .await
-    .expect("marker should be written");
+    .expect("remote installed cache should refresh");
 
     let outcome = manager
         .plugins_for_config(
@@ -155,7 +145,4 @@ async fn startup_remote_plugin_sync_writes_marker_and_refreshes_remote_installed
     assert_eq!(outcome.plugins().len(), 1);
     assert_eq!(outcome.plugins()[0].config_name, "linear@chatgpt-global");
     assert_eq!(notification_count.load(Ordering::SeqCst), 1);
-
-    let marker_contents = std::fs::read_to_string(marker_path).expect("marker should be readable");
-    assert_eq!(marker_contents, "ok\n");
 }

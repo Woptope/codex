@@ -15,6 +15,9 @@ pub mod startup_sync;
 pub mod store;
 pub mod toggles;
 
+#[cfg(test)]
+mod manager_tests;
+
 use codex_config::types::McpServerConfig;
 
 pub const OPENAI_CURATED_MARKETPLACE_NAME: &str = "openai-curated";

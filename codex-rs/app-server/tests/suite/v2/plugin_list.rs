@@ -1044,6 +1044,71 @@ async fn plugin_list_accepts_legacy_string_default_prompt() -> Result<()> {
 }
 
 #[tokio::test]
+async fn app_server_startup_refreshes_remote_installed_cache_each_process() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    let server = MockServer::start().await;
+    write_remote_plugin_catalog_config(
+        codex_home.path(),
+        &format!("{}/backend-api/", server.uri()),
+    )?;
+    write_chatgpt_auth(
+        codex_home.path(),
+        ChatGptAuthFixture::new("chatgpt-token")
+            .account_id("account-123")
+            .chatgpt_user_id("user-123")
+            .chatgpt_account_id("account-123"),
+        AuthCredentialsStoreMode::File,
+    )?;
+    std::fs::create_dir_all(codex_home.path().join(".tmp"))?;
+    std::fs::write(
+        codex_home
+            .path()
+            .join(".tmp/app-server-remote-plugin-sync-v1"),
+        "ok\n",
+    )?;
+
+    let empty_page_body = r#"{
+  "plugins": [],
+  "pagination": {
+    "limit": 50,
+    "next_page_token": null
+  }
+}"#;
+    for scope in ["GLOBAL", "WORKSPACE"] {
+        Mock::given(method("GET"))
+            .and(path("/backend-api/ps/plugins/installed"))
+            .and(query_param("scope", scope))
+            .and(header("authorization", "Bearer chatgpt-token"))
+            .and(header("chatgpt-account-id", "account-123"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(empty_page_body))
+            .mount(&server)
+            .await;
+    }
+    Mock::given(method("GET"))
+        .and(path("/backend-api/plugins/featured"))
+        .and(query_param("platform", "codex"))
+        .and(header("authorization", "Bearer chatgpt-token"))
+        .and(header("chatgpt-account-id", "account-123"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(r#"[]"#))
+        .mount(&server)
+        .await;
+
+    {
+        let mut mcp = McpProcess::new_with_plugin_startup_tasks(codex_home.path()).await?;
+        timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
+        wait_for_remote_plugin_request_count(&server, "/ps/plugins/installed", 2).await?;
+    }
+
+    {
+        let mut mcp = McpProcess::new_with_plugin_startup_tasks(codex_home.path()).await?;
+        timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
+        wait_for_remote_plugin_request_count(&server, "/ps/plugins/installed", 4).await?;
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn plugin_list_includes_remote_marketplaces_when_remote_plugin_enabled() -> Result<()> {
     let codex_home = TempDir::new()?;
     let server = MockServer::start().await;
