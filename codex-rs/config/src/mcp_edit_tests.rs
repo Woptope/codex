@@ -82,3 +82,40 @@ approval_mode = "approve"
 
     Ok(())
 }
+
+#[tokio::test]
+async fn plugin_edits_set_and_clear_enabled_entries() -> anyhow::Result<()> {
+    let unique_suffix = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let codex_home = std::env::temp_dir().join(format!(
+        "codex-config-plugin-edit-test-{}-{unique_suffix}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&codex_home)?;
+    std::fs::write(
+        codex_home.join(CONFIG_TOML_FILE),
+        r#"[plugins."linear@openai-curated"]
+enabled = false
+
+[plugins."gmail@openai-curated"]
+enabled = true
+"#,
+    )?;
+
+    ConfigEditsBuilder::new(&codex_home)
+        .set_plugin_enabled("linear@openai-curated", true)
+        .clear_plugin("gmail@openai-curated")
+        .apply()
+        .await?;
+
+    let serialized = std::fs::read_to_string(codex_home.join(CONFIG_TOML_FILE))?;
+    assert_eq!(
+        serialized,
+        r#"[plugins."linear@openai-curated"]
+enabled = true
+"#
+    );
+
+    std::fs::remove_dir_all(&codex_home)?;
+
+    Ok(())
+}
