@@ -104,10 +104,6 @@ export class AppServerSessionClient implements ContinueSessionClient {
     });
   }
 
-  get connected(): boolean {
-    return this.#rpc.connected;
-  }
-
   async initialize(url: string): Promise<void> {
     await this.#rpc.connect(url);
     await this.#rpc.request("initialize", {

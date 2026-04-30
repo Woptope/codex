@@ -56,7 +56,7 @@ input {
 
 .connection {
   display: grid;
-  grid-template-columns: minmax(260px, 420px) max-content max-content;
+  grid-template-columns: minmax(220px, 420px) auto auto;
   gap: 8px;
   align-items: end;
   flex: 1;
@@ -109,13 +109,6 @@ button:disabled {
 
 .primary:hover:not(:disabled) {
   background: #1f55ab;
-}
-
-.primary:disabled {
-  border-color: #c6ccd6;
-  background: #d8dde6;
-  color: #798294;
-  opacity: 1;
 }
 
 .status-pill {
@@ -193,14 +186,6 @@ button:disabled {
   align-content: start;
   gap: 8px;
   overflow: auto;
-}
-
-.session-empty {
-  padding: 10px;
-  border: 1px dashed #c8ced8;
-  border-radius: 8px;
-  color: #626b7a;
-  font-size: 13px;
 }
 
 .session-row {

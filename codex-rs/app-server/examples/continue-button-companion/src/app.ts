@@ -121,17 +121,10 @@ elements.serverUrl.addEventListener("change", () => {
 });
 
 render();
-void autoConnect();
 
 function render(): void {
   const sessions = appServer.listTrackedSessions();
   elements.sessionList.replaceChildren(...sessions.map(renderSessionRow));
-  if (sessions.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "session-empty";
-    empty.textContent = appServer.connected ? "No companion sessions" : "Disconnected";
-    elements.sessionList.append(empty);
-  }
 
   const selectedSession =
     selectedSessionId === null
@@ -139,7 +132,6 @@ function render(): void {
       : sessions.find((session) => session.id === selectedSessionId) ?? null;
   renderSelectedSession(selectedSession);
   elements.continueButton.disabled = !continueController.canContinue();
-  renderConnectionControls(false);
 }
 
 function renderSessionRow(session: CompanionSession): HTMLElement {
@@ -198,36 +190,10 @@ async function runAction(successMessage: string, action: () => Promise<void>): P
 
 function setControlsDisabled(disabled: boolean): void {
   elements.connect.disabled = disabled;
-  renderConnectionControls(disabled);
-  elements.continueButton.disabled = disabled || !continueController.canContinue();
-}
-
-function renderConnectionControls(forceDisabled: boolean): void {
-  const disabled = forceDisabled || !appServer.connected;
   elements.startSession.disabled = disabled;
   elements.resumeSession.disabled = disabled;
   elements.refreshSessions.disabled = disabled;
-  elements.connect.disabled = forceDisabled;
-  if (appServer.connected) {
-    elements.connectionStatus.textContent = "Connected";
-    elements.connectionStatus.dataset.state = "connected";
-  }
-}
-
-async function autoConnect(): Promise<void> {
-  try {
-    await appServer.initialize(elements.serverUrl.value.trim());
-    elements.connectionStatus.textContent = "Connected";
-    elements.connectionStatus.dataset.state = "connected";
-    await appServer.refreshAll();
-    setActivity("Connected", "ok");
-  } catch {
-    elements.connectionStatus.textContent = "Disconnected";
-    elements.connectionStatus.dataset.state = "none";
-    setActivity("Start app-server, then connect", "muted");
-  } finally {
-    render();
-  }
+  elements.continueButton.disabled = disabled || !continueController.canContinue();
 }
 
 function setActivity(message: string, state: "muted" | "ok" | "error"): void {
