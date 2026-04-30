@@ -27,12 +27,12 @@ use tracing::warn;
 
 use crate::config::Config;
 use crate::mcp::McpManager;
-use crate::plugins::PluginsManager;
 use crate::session::INITIAL_SUBMIT_ID;
 use codex_config::AppsRequirementsToml;
 use codex_config::types::AppToolApproval;
 use codex_config::types::AppsConfigToml;
 use codex_config::types::ToolSuggestDiscoverableType;
+use codex_core_plugins::PluginsManager;
 use codex_features::Feature;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
@@ -409,12 +409,7 @@ fn write_cached_accessible_connectors(
 
 async fn tool_suggest_connector_ids(config: &Config) -> HashSet<String> {
     let mut connector_ids = PluginsManager::new(config.codex_home.to_path_buf())
-        .plugins_for_config(
-            &config.config_layer_stack,
-            config.features.enabled(Feature::Plugins),
-            config.features.enabled(Feature::RemotePlugin),
-            config.features.enabled(Feature::PluginHooks),
-        )
+        .plugins_for_config(&config.config_layer_stack, config.plugin_feature_flags())
         .await
         .capability_summaries()
         .iter()

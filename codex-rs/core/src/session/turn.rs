@@ -172,9 +172,7 @@ pub(crate) async fn run_turn(
         .plugins_manager
         .plugins_for_config(
             &turn_context.config.config_layer_stack,
-            turn_context.config.features.enabled(Feature::Plugins),
-            turn_context.config.features.enabled(Feature::RemotePlugin),
-            turn_context.config.features.enabled(Feature::PluginHooks),
+            turn_context.config.plugin_feature_flags(),
         )
         .await;
     // Structured plugin:// mentions are resolved from the current session's
@@ -1131,9 +1129,7 @@ pub(crate) async fn built_tools(
         .plugins_manager
         .plugins_for_config(
             &turn_context.config.config_layer_stack,
-            turn_context.config.features.enabled(Feature::Plugins),
-            turn_context.config.features.enabled(Feature::RemotePlugin),
-            turn_context.config.features.enabled(Feature::PluginHooks),
+            turn_context.config.plugin_feature_flags(),
         )
         .await;
 

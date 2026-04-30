@@ -45,6 +45,7 @@ pub use manager::ConfiguredMarketplaceListOutcome;
 pub use manager::ConfiguredMarketplacePlugin;
 pub use manager::PluginDetail;
 pub use manager::PluginDetailsUnavailableReason;
+pub use manager::PluginFeatureFlags;
 pub use manager::PluginInstallError;
 pub use manager::PluginInstallOutcome;
 pub use manager::PluginInstallRequest;

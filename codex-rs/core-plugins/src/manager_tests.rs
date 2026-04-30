@@ -264,6 +264,14 @@ impl TestPluginConfig {
             chatgpt_base_url: chatgpt_base_url(&effective_config),
         }
     }
+
+    fn plugin_feature_flags(&self) -> PluginFeatureFlags {
+        PluginFeatureFlags {
+            plugins_enabled: self.plugins_enabled,
+            remote_plugins_enabled: self.remote_plugins_enabled,
+            plugin_hooks_enabled: self.plugin_hooks_enabled,
+        }
+    }
 }
 
 fn feature_enabled(config: &TomlValue, feature_name: &str) -> bool {
@@ -327,9 +335,7 @@ impl PluginsManagerTestConfigExt for PluginsManager {
         PluginsManager::plugins_for_config(
             self,
             &config.config_layer_stack,
-            config.plugins_enabled,
-            config.remote_plugins_enabled,
-            config.plugin_hooks_enabled,
+            config.plugin_feature_flags(),
         )
         .await
     }
@@ -620,14 +626,11 @@ remote_plugin = true
     let enabled_outcome = manager.plugins_for_test_config(&config).await;
     assert_eq!(enabled_outcome.plugins().len(), 1);
 
-    let disabled_outcome = PluginsManager::plugins_for_config(
-        &manager,
-        &config.config_layer_stack,
-        config.plugins_enabled,
-        /*remote_plugins_enabled*/ false,
-        config.plugin_hooks_enabled,
-    )
-    .await;
+    let mut feature_flags = config.plugin_feature_flags();
+    feature_flags.remote_plugins_enabled = false;
+    let disabled_outcome =
+        PluginsManager::plugins_for_config(&manager, &config.config_layer_stack, feature_flags)
+            .await;
     assert_eq!(disabled_outcome, PluginLoadOutcome::default());
 }
 
@@ -730,9 +733,11 @@ async fn remote_installed_plugins_cache_refresh_clears_stale_cache_when_auth_is_
     let outcome = manager
         .plugins_for_config(
             &ConfigLayerStack::default(),
-            /*plugins_enabled*/ true,
-            /*remote_plugins_enabled*/ true,
-            /*plugin_hooks_enabled*/ true,
+            PluginFeatureFlags {
+                plugins_enabled: true,
+                remote_plugins_enabled: true,
+                plugin_hooks_enabled: true,
+            },
         )
         .await;
     assert_eq!(outcome, PluginLoadOutcome::default());

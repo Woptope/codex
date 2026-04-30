@@ -271,10 +271,6 @@ use codex_core::find_thread_name_by_id;
 use codex_core::find_thread_names_by_ids;
 use codex_core::find_thread_path_by_id_str;
 use codex_core::path_utils;
-use codex_core::plugins::PluginInstallError as CorePluginInstallError;
-use codex_core::plugins::PluginInstallRequest;
-use codex_core::plugins::PluginReadRequest;
-use codex_core::plugins::PluginUninstallError as CorePluginUninstallError;
 use codex_core::read_head_for_summary;
 use codex_core::read_session_meta_line;
 use codex_core::sandboxing::SandboxPermissions;
@@ -282,6 +278,10 @@ use codex_core::windows_sandbox::WindowsSandboxLevelExt;
 use codex_core::windows_sandbox::WindowsSandboxSetupMode as CoreWindowsSandboxSetupMode;
 use codex_core::windows_sandbox::WindowsSandboxSetupRequest;
 use codex_core_plugins::OPENAI_CURATED_MARKETPLACE_NAME;
+use codex_core_plugins::PluginInstallError as CorePluginInstallError;
+use codex_core_plugins::PluginInstallRequest;
+use codex_core_plugins::PluginReadRequest;
+use codex_core_plugins::PluginUninstallError as CorePluginUninstallError;
 use codex_core_plugins::loader::load_plugin_apps;
 use codex_core_plugins::loader::load_plugin_mcp_servers;
 use codex_core_plugins::manifest::PluginManifestInterface;
@@ -6306,9 +6306,7 @@ impl CodexMessageProcessor {
                 plugins_manager
                     .effective_skill_roots_for_layer_stack(
                         &config_layer_stack,
-                        config.features.enabled(Feature::Plugins),
-                        config.features.enabled(Feature::RemotePlugin),
-                        config.features.enabled(Feature::PluginHooks),
+                        config.plugin_feature_flags(),
                     )
                     .await
             } else {
@@ -6391,13 +6389,10 @@ impl CodexMessageProcessor {
                 config.features.enabled(Feature::Plugins) && workspace_codex_plugins_enabled;
             let plugin_outcome = if plugins_enabled && config.features.enabled(Feature::PluginHooks)
             {
+                let mut plugin_feature_flags = config.plugin_feature_flags();
+                plugin_feature_flags.plugins_enabled = plugins_enabled;
                 plugins_manager
-                    .plugins_for_layer_stack(
-                        &config.config_layer_stack,
-                        plugins_enabled,
-                        config.features.enabled(Feature::RemotePlugin),
-                        /*plugin_hooks_feature_enabled*/ true,
-                    )
+                    .plugins_for_layer_stack(&config.config_layer_stack, plugin_feature_flags)
                     .await
             } else {
                 codex_core::plugins::PluginLoadOutcome::default()

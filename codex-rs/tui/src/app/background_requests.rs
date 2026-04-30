@@ -233,12 +233,7 @@ impl App {
 
         tokio::spawn(async move {
             let plugins = PluginsManager::new(config.codex_home.to_path_buf())
-                .plugins_for_config(
-                    &config.config_layer_stack,
-                    config.features.enabled(Feature::Plugins),
-                    config.features.enabled(Feature::RemotePlugin),
-                    config.features.enabled(Feature::PluginHooks),
-                )
+                .plugins_for_config(&config.config_layer_stack, config.plugin_feature_flags())
                 .await
                 .capability_summaries()
                 .to_vec();

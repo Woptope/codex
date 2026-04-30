@@ -8,8 +8,6 @@ use tokio::runtime::Handle;
 use tokio::sync::broadcast;
 use tracing::warn;
 
-use codex_features::Feature;
-
 use crate::SkillsManager;
 use crate::config::Config;
 use crate::file_watcher::FileWatcher;
@@ -18,8 +16,8 @@ use crate::file_watcher::Receiver;
 use crate::file_watcher::ThrottledWatchReceiver;
 use crate::file_watcher::WatchPath;
 use crate::file_watcher::WatchRegistration;
-use crate::plugins::PluginsManager;
 use crate::skills_load_input_from_config;
+use codex_core_plugins::PluginsManager;
 
 #[cfg(not(test))]
 const WATCHER_THROTTLE_INTERVAL: Duration = Duration::from_secs(10);
@@ -64,12 +62,7 @@ impl SkillsWatcher {
         fs: Option<Arc<dyn codex_exec_server::ExecutorFileSystem>>,
     ) -> WatchRegistration {
         let plugin_outcome = plugins_manager
-            .plugins_for_config(
-                &config.config_layer_stack,
-                config.features.enabled(Feature::Plugins),
-                config.features.enabled(Feature::RemotePlugin),
-                config.features.enabled(Feature::PluginHooks),
-            )
+            .plugins_for_config(&config.config_layer_stack, config.plugin_feature_flags())
             .await;
         let effective_skill_roots = plugin_outcome.effective_skill_roots();
         let skills_input = skills_load_input_from_config(config, effective_skill_roots);

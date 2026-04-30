@@ -315,7 +315,7 @@ async fn refresh_missing_suggested_connectors(
 fn verified_plugin_suggestion_completed(
     tool_id: &str,
     config: &crate::config::Config,
-    plugins_manager: &crate::plugins::PluginsManager,
+    plugins_manager: &codex_core_plugins::PluginsManager,
 ) -> bool {
     plugins_manager
         .list_marketplaces_for_config(

@@ -996,17 +996,20 @@ impl Config {
         }
     }
 
+    pub fn plugin_feature_flags(&self) -> codex_core_plugins::PluginFeatureFlags {
+        codex_core_plugins::PluginFeatureFlags {
+            plugins_enabled: self.features.enabled(Feature::Plugins),
+            remote_plugins_enabled: self.features.enabled(Feature::RemotePlugin),
+            plugin_hooks_enabled: self.features.enabled(Feature::PluginHooks),
+        }
+    }
+
     pub async fn to_mcp_config(
         &self,
-        plugins_manager: &crate::plugins::PluginsManager,
+        plugins_manager: &codex_core_plugins::PluginsManager,
     ) -> McpConfig {
         let loaded_plugins = plugins_manager
-            .plugins_for_config(
-                &self.config_layer_stack,
-                self.features.enabled(Feature::Plugins),
-                self.features.enabled(Feature::RemotePlugin),
-                self.features.enabled(Feature::PluginHooks),
-            )
+            .plugins_for_config(&self.config_layer_stack, self.plugin_feature_flags())
             .await;
         let mut configured_mcp_servers = self.mcp_servers.get().clone();
         for plugin in loaded_plugins

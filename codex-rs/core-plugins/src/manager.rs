@@ -77,6 +77,16 @@ static CURATED_REPO_SYNC_STARTED: AtomicBool = AtomicBool::new(false);
 const FEATURED_PLUGIN_IDS_CACHE_TTL: std::time::Duration =
     std::time::Duration::from_secs(60 * 60 * 3);
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PluginFeatureFlags {
+    /// Whether plugin loading is enabled at all.
+    pub plugins_enabled: bool,
+    /// Whether remotely installed plugins should be included in local plugin loading.
+    pub remote_plugins_enabled: bool,
+    /// Whether plugin-provided hooks should be loaded.
+    pub plugin_hooks_enabled: bool,
+}
+
 #[derive(Clone, PartialEq, Eq)]
 struct FeaturedPluginIdsCacheKey {
     chatgpt_base_url: String,
@@ -370,8 +380,7 @@ pub struct PluginsManager {
 #[derive(Clone)]
 struct CachedPluginLoadOutcome {
     config_version: String,
-    remote_plugins_enabled: bool,
-    plugin_hooks_enabled: bool,
+    feature_flags: PluginFeatureFlags,
     outcome: PluginLoadOutcome,
 }
 
@@ -431,15 +440,11 @@ impl PluginsManager {
     pub async fn plugins_for_config(
         &self,
         config_layer_stack: &ConfigLayerStack,
-        plugins_enabled: bool,
-        remote_plugins_enabled: bool,
-        plugin_hooks_enabled: bool,
+        feature_flags: PluginFeatureFlags,
     ) -> PluginLoadOutcome {
         self.plugins_for_config_with_force_reload(
             config_layer_stack,
-            plugins_enabled,
-            remote_plugins_enabled,
-            plugin_hooks_enabled,
+            feature_flags,
             /*force_reload*/ false,
         )
         .await
@@ -448,32 +453,26 @@ impl PluginsManager {
     pub(crate) async fn plugins_for_config_with_force_reload(
         &self,
         config_layer_stack: &ConfigLayerStack,
-        plugins_enabled: bool,
-        remote_plugins_enabled: bool,
-        plugin_hooks_enabled: bool,
+        feature_flags: PluginFeatureFlags,
         force_reload: bool,
     ) -> PluginLoadOutcome {
-        if !plugins_enabled {
+        if !feature_flags.plugins_enabled {
             return PluginLoadOutcome::default();
         }
 
         let config_version = version_for_toml(&config_layer_stack.effective_config());
         if !force_reload
-            && let Some(outcome) = self.cached_enabled_outcome(
-                &config_version,
-                remote_plugins_enabled,
-                plugin_hooks_enabled,
-            )
+            && let Some(outcome) = self.cached_enabled_outcome(&config_version, feature_flags)
         {
             return outcome;
         }
 
         let outcome = load_plugins_from_layer_stack(
             config_layer_stack,
-            self.remote_installed_plugin_configs(remote_plugins_enabled),
+            self.remote_installed_plugin_configs(feature_flags.remote_plugins_enabled),
             &self.store,
             self.restriction_product,
-            plugin_hooks_enabled,
+            feature_flags.plugin_hooks_enabled,
         )
         .await;
         log_plugin_load_errors(&outcome);
@@ -483,8 +482,7 @@ impl PluginsManager {
         };
         *cache = Some(CachedPluginLoadOutcome {
             config_version,
-            remote_plugins_enabled,
-            plugin_hooks_enabled,
+            feature_flags,
             outcome: outcome.clone(),
         });
         outcome
@@ -511,19 +509,17 @@ impl PluginsManager {
     pub async fn plugins_for_layer_stack(
         &self,
         config_layer_stack: &ConfigLayerStack,
-        plugins_enabled: bool,
-        remote_plugins_enabled: bool,
-        plugin_hooks_feature_enabled: bool,
+        feature_flags: PluginFeatureFlags,
     ) -> PluginLoadOutcome {
-        if !plugins_enabled {
+        if !feature_flags.plugins_enabled {
             return PluginLoadOutcome::default();
         }
         load_plugins_from_layer_stack(
             config_layer_stack,
-            self.remote_installed_plugin_configs(remote_plugins_enabled),
+            self.remote_installed_plugin_configs(feature_flags.remote_plugins_enabled),
             &self.store,
             self.restriction_product,
-            plugin_hooks_feature_enabled,
+            feature_flags.plugin_hooks_enabled,
         )
         .await
     }
@@ -532,42 +528,30 @@ impl PluginsManager {
     pub async fn effective_skill_roots_for_layer_stack(
         &self,
         config_layer_stack: &ConfigLayerStack,
-        plugins_enabled: bool,
-        remote_plugins_enabled: bool,
-        plugin_hooks_enabled: bool,
+        feature_flags: PluginFeatureFlags,
     ) -> Vec<AbsolutePathBuf> {
-        self.plugins_for_layer_stack(
-            config_layer_stack,
-            plugins_enabled,
-            remote_plugins_enabled,
-            plugin_hooks_enabled,
-        )
-        .await
-        .effective_skill_roots()
+        self.plugins_for_layer_stack(config_layer_stack, feature_flags)
+            .await
+            .effective_skill_roots()
     }
 
     fn cached_enabled_outcome(
         &self,
         config_version: &str,
-        remote_plugins_enabled: bool,
-        plugin_hooks_enabled: bool,
+        feature_flags: PluginFeatureFlags,
     ) -> Option<PluginLoadOutcome> {
         match self.cached_enabled_outcome.read() {
             Ok(cache) => cache
                 .as_ref()
                 .filter(|cached| {
-                    cached.config_version == config_version
-                        && cached.remote_plugins_enabled == remote_plugins_enabled
-                        && cached.plugin_hooks_enabled == plugin_hooks_enabled
+                    cached.config_version == config_version && cached.feature_flags == feature_flags
                 })
                 .map(|cached| cached.outcome.clone()),
             Err(err) => err
                 .into_inner()
                 .as_ref()
                 .filter(|cached| {
-                    cached.config_version == config_version
-                        && cached.remote_plugins_enabled == remote_plugins_enabled
-                        && cached.plugin_hooks_enabled == plugin_hooks_enabled
+                    cached.config_version == config_version && cached.feature_flags == feature_flags
                 })
                 .map(|cached| cached.outcome.clone()),
         }

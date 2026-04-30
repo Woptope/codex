@@ -274,7 +274,6 @@ use crate::exec_policy::ExecPolicyUpdateError;
 use crate::guardian::GuardianReviewSessionManager;
 use crate::mcp::McpManager;
 use crate::network_policy_decision::execpolicy_network_rule_amendment;
-use crate::plugins::PluginsManager;
 use crate::rollout::map_session_init_error;
 use crate::session_startup_prewarm::SessionStartupPrewarmHandle;
 use crate::shell;
@@ -301,6 +300,7 @@ use crate::turn_timing::TurnTimingState;
 use crate::turn_timing::record_turn_ttfm_metric;
 use crate::unified_exec::UnifiedExecProcessManager;
 use crate::windows_sandbox::WindowsSandboxLevelExt;
+use codex_core_plugins::PluginsManager;
 use codex_git_utils::get_git_repo_root;
 use codex_mcp::compute_auth_statuses;
 use codex_mcp::with_codex_apps_mcp;
@@ -476,12 +476,7 @@ impl Codex {
             .as_ref()
             .map(|environment| environment.get_filesystem());
         let plugin_outcome = plugins_manager
-            .plugins_for_config(
-                &config.config_layer_stack,
-                config.features.enabled(Feature::Plugins),
-                config.features.enabled(Feature::RemotePlugin),
-                config.features.enabled(Feature::PluginHooks),
-            )
+            .plugins_for_config(&config.config_layer_stack, config.plugin_feature_flags())
             .await;
         let effective_skill_roots = plugin_outcome.effective_skill_roots();
         let skills_input = skills_load_input_from_config(&config, effective_skill_roots);
@@ -2675,9 +2670,7 @@ impl Session {
             .plugins_manager
             .plugins_for_config(
                 &turn_context.config.config_layer_stack,
-                turn_context.config.features.enabled(Feature::Plugins),
-                turn_context.config.features.enabled(Feature::RemotePlugin),
-                turn_context.config.features.enabled(Feature::PluginHooks),
+                turn_context.config.plugin_feature_flags(),
             )
             .await;
         if let Some(plugin_instructions) =
@@ -3375,12 +3368,7 @@ async fn build_hooks_for_config(
     let plugin_hooks_enabled = config.features.enabled(Feature::PluginHooks);
     let (plugin_hook_sources, plugin_hook_load_warnings) = if plugin_hooks_enabled {
         let plugin_outcome = plugins_manager
-            .plugins_for_config(
-                &config.config_layer_stack,
-                config.features.enabled(Feature::Plugins),
-                config.features.enabled(Feature::RemotePlugin),
-                config.features.enabled(Feature::PluginHooks),
-            )
+            .plugins_for_config(&config.config_layer_stack, config.plugin_feature_flags())
             .await;
         (
             plugin_outcome.effective_plugin_hook_sources(),

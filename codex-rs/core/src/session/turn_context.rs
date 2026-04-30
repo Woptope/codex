@@ -698,9 +698,7 @@ impl Session {
             .plugins_manager
             .plugins_for_config(
                 &per_turn_config.config_layer_stack,
-                per_turn_config.features.enabled(Feature::Plugins),
-                per_turn_config.features.enabled(Feature::RemotePlugin),
-                per_turn_config.features.enabled(Feature::PluginHooks),
+                per_turn_config.plugin_feature_flags(),
             )
             .await;
         let effective_skill_roots = plugin_outcome.effective_skill_roots();

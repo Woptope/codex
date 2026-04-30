@@ -6,22 +6,6 @@ pub(crate) mod test_support;
 
 use codex_config::types::McpServerConfig;
 
-pub use codex_core_plugins::ConfiguredMarketplace;
-pub use codex_core_plugins::ConfiguredMarketplaceListOutcome;
-pub use codex_core_plugins::ConfiguredMarketplacePlugin;
-pub use codex_core_plugins::PluginDetail;
-pub use codex_core_plugins::PluginDetailsUnavailableReason;
-pub use codex_core_plugins::PluginInstallError;
-pub use codex_core_plugins::PluginInstallOutcome;
-pub use codex_core_plugins::PluginInstallRequest;
-pub use codex_core_plugins::PluginReadOutcome;
-pub use codex_core_plugins::PluginReadRequest;
-pub use codex_core_plugins::PluginRemoteSyncError;
-pub use codex_core_plugins::PluginUninstallError;
-pub use codex_core_plugins::PluginsManager;
-pub use codex_core_plugins::RemotePluginSyncResult;
-pub use codex_core_plugins::marketplace_upgrade::ConfiguredMarketplaceUpgradeError as PluginMarketplaceUpgradeError;
-pub use codex_core_plugins::marketplace_upgrade::ConfiguredMarketplaceUpgradeOutcome as PluginMarketplaceUpgradeOutcome;
 pub use codex_plugin::AppConnectorId;
 pub use codex_plugin::EffectiveSkillRoots;
 pub use codex_plugin::PluginCapabilitySummary;
