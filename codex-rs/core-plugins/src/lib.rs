@@ -1,7 +1,7 @@
-pub mod discoverable;
+mod discoverable;
 pub mod installed_marketplaces;
 pub mod loader;
-pub mod manager;
+mod manager;
 pub mod manifest;
 pub mod marketplace;
 pub mod marketplace_add;
@@ -39,5 +39,22 @@ pub const TOOL_SUGGEST_DISCOVERABLE_PLUGIN_ALLOWLIST: &[&str] = &[
     "computer-use@openai-bundled",
 ];
 
-pub type LoadedPlugin = codex_plugin::LoadedPlugin<McpServerConfig>;
-pub type PluginLoadOutcome = codex_plugin::PluginLoadOutcome<McpServerConfig>;
+pub use discoverable::list_tool_suggest_discoverable_plugins;
+pub use manager::ConfiguredMarketplace;
+pub use manager::ConfiguredMarketplaceListOutcome;
+pub use manager::ConfiguredMarketplacePlugin;
+pub use manager::PluginDetail;
+pub use manager::PluginDetailsUnavailableReason;
+pub use manager::PluginInstallError;
+pub use manager::PluginInstallOutcome;
+pub use manager::PluginInstallRequest;
+pub use manager::PluginReadOutcome;
+pub use manager::PluginReadRequest;
+pub use manager::PluginRemoteSyncError;
+pub use manager::PluginUninstallError;
+pub use manager::PluginsManager;
+pub use manager::RemotePluginSyncResult;
+
+#[cfg(test)]
+pub(crate) type LoadedPlugin = codex_plugin::LoadedPlugin<McpServerConfig>;
+pub(crate) type PluginLoadOutcome = codex_plugin::PluginLoadOutcome<McpServerConfig>;

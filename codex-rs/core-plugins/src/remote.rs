@@ -50,8 +50,6 @@ pub struct RemoteInstalledPlugin {
     pub id: String,
     pub name: String,
     pub enabled: bool,
-    pub release_version: Option<String>,
-    pub bundle_download_url: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -673,8 +671,6 @@ fn remote_installed_plugin_to_info(
         id: plugin.id.clone(),
         name: plugin.name.clone(),
         enabled: installed_plugin.enabled,
-        release_version: plugin.release.version.clone(),
-        bundle_download_url: plugin.release.bundle_download_url.clone(),
     }
 }
 
@@ -831,7 +827,6 @@ async fn get_remote_plugin_installed_page(
     let client = build_reqwest_client();
     let mut request = authenticated_request(client.get(&url), auth)?;
     request = request.query(&[("scope", scope.api_value())]);
-    request = request.query(&[("includeDownloadUrls", true)]);
     if let Some(page_token) = page_token {
         request = request.query(&[("pageToken", page_token)]);
     }

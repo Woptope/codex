@@ -582,8 +582,6 @@ remote_plugin = true
         id: "plugins~Plugin_linear".to_string(),
         name: "linear".to_string(),
         enabled: true,
-        release_version: Some("local".to_string()),
-        bundle_download_url: Some("https://example.com/linear.tar.gz".to_string()),
     }]);
 
     let outcome = manager.plugins_for_test_config(&config).await;
@@ -617,8 +615,6 @@ remote_plugin = true
         id: "plugins~Plugin_linear".to_string(),
         name: "linear".to_string(),
         enabled: true,
-        release_version: Some("local".to_string()),
-        bundle_download_url: Some("https://example.com/linear.tar.gz".to_string()),
     }]);
 
     let enabled_outcome = manager.plugins_for_test_config(&config).await;
@@ -653,90 +649,10 @@ remote_plugin = true
         id: "plugins~Plugin_linear".to_string(),
         name: "linear".to_string(),
         enabled: true,
-        release_version: Some("local".to_string()),
-        bundle_download_url: Some("https://example.com/linear.tar.gz".to_string()),
     }]);
 
     let outcome = manager.plugins_for_test_config(&config).await;
     assert_eq!(outcome, PluginLoadOutcome::default());
-}
-
-#[tokio::test]
-async fn remote_installed_cache_uses_available_local_cache_without_version_gate() {
-    let codex_home = TempDir::new().unwrap();
-    let linear_root = codex_home
-        .path()
-        .join("plugins/cache/chatgpt-global/linear/1.0.0");
-    write_plugin(
-        &codex_home.path().join("plugins/cache/chatgpt-global"),
-        "linear/1.0.0",
-        "linear",
-    );
-    write_file(
-        &codex_home.path().join(CONFIG_TOML_FILE),
-        r#"[features]
-plugins = true
-remote_plugin = true
-"#,
-    );
-
-    let config = load_config(codex_home.path(), codex_home.path()).await;
-    let manager = PluginsManager::new(codex_home.path().to_path_buf());
-    manager.write_remote_installed_plugins_cache(vec![RemoteInstalledPlugin {
-        marketplace_name: "chatgpt-global".to_string(),
-        id: "plugins~Plugin_linear".to_string(),
-        name: "linear".to_string(),
-        enabled: true,
-        release_version: Some("2.0.0".to_string()),
-        bundle_download_url: Some("https://example.com/linear.tar.gz".to_string()),
-    }]);
-
-    let outcome = manager.plugins_for_test_config(&config).await;
-    assert_eq!(
-        outcome.effective_skill_roots(),
-        vec![AbsolutePathBuf::try_from(linear_root.join("skills")).unwrap()]
-    );
-    assert_eq!(outcome.plugins().len(), 1);
-    assert_eq!(outcome.plugins()[0].config_name, "linear@chatgpt-global");
-}
-
-#[tokio::test]
-async fn remote_installed_cache_uses_available_local_cache_without_release_metadata() {
-    let codex_home = TempDir::new().unwrap();
-    let linear_root = codex_home
-        .path()
-        .join("plugins/cache/chatgpt-global/linear/local");
-    write_plugin(
-        &codex_home.path().join("plugins/cache/chatgpt-global"),
-        "linear/local",
-        "linear",
-    );
-    write_file(
-        &codex_home.path().join(CONFIG_TOML_FILE),
-        r#"[features]
-plugins = true
-remote_plugin = true
-"#,
-    );
-
-    let config = load_config(codex_home.path(), codex_home.path()).await;
-    let manager = PluginsManager::new(codex_home.path().to_path_buf());
-    manager.write_remote_installed_plugins_cache(vec![RemoteInstalledPlugin {
-        marketplace_name: "chatgpt-global".to_string(),
-        id: "plugins~Plugin_linear".to_string(),
-        name: "linear".to_string(),
-        enabled: true,
-        release_version: None,
-        bundle_download_url: None,
-    }]);
-
-    let outcome = manager.plugins_for_test_config(&config).await;
-    assert_eq!(
-        outcome.effective_skill_roots(),
-        vec![AbsolutePathBuf::try_from(linear_root.join("skills")).unwrap()]
-    );
-    assert_eq!(outcome.plugins().len(), 1);
-    assert_eq!(outcome.plugins()[0].config_name, "linear@chatgpt-global");
 }
 
 async fn wait_for_counter(counter: &AtomicUsize, expected: usize) {
@@ -796,8 +712,6 @@ async fn remote_installed_plugins_cache_refresh_clears_stale_cache_when_auth_is_
         id: "plugins~Plugin_linear".to_string(),
         name: "linear".to_string(),
         enabled: true,
-        release_version: Some("local".to_string()),
-        bundle_download_url: Some("https://example.com/linear.tar.gz".to_string()),
     }]);
     let notification_count = Arc::new(AtomicUsize::new(0));
     let notification_count_for_callback = Arc::clone(&notification_count);
@@ -1611,7 +1525,7 @@ async fn load_plugins_rejects_invalid_plugin_keys() {
 }
 
 #[tokio::test]
-async fn install_plugin_materializes_relative_path_plugin() {
+async fn install_plugin_updates_config_with_relative_path_and_plugin_key() {
     let tmp = tempfile::tempdir().unwrap();
     let repo_root = tmp.path().join("repo");
     fs::create_dir_all(repo_root.join(".git")).unwrap();
@@ -1658,6 +1572,9 @@ async fn install_plugin_materializes_relative_path_plugin() {
             auth_policy: MarketplacePluginAuthPolicy::OnUse,
         }
     );
+    let config = fs::read_to_string(tmp.path().join(CONFIG_TOML_FILE)).unwrap();
+    assert!(config.contains(r#"[plugins."sample-plugin@debug"]"#));
+    assert!(config.contains("enabled = true"));
 }
 
 #[tokio::test]
@@ -1858,7 +1775,7 @@ async fn install_plugin_supports_relative_git_subdir_marketplace_sources() {
 }
 
 #[tokio::test]
-async fn uninstall_plugin_removes_cache() {
+async fn uninstall_plugin_removes_cache_and_config_entry() {
     let tmp = tempfile::tempdir().unwrap();
     write_plugin(
         &tmp.path().join("plugins/cache/debug"),
@@ -1890,6 +1807,8 @@ enabled = true
             .join("plugins/cache/debug/sample-plugin")
             .exists()
     );
+    let config = fs::read_to_string(tmp.path().join(CONFIG_TOML_FILE)).unwrap();
+    assert!(!config.contains(r#"[plugins."sample-plugin@debug"]"#));
 }
 
 #[tokio::test]

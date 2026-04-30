@@ -1,7 +1,6 @@
 use codex_config::types::PluginConfig;
 use codex_core::config::Config;
 use codex_core::config::ConfigBuilder;
-use codex_core::config::edit::ConfigEditsBuilder;
 use codex_core::plugins::PluginId;
 use codex_core::plugins::PluginInstallRequest;
 use codex_core::plugins::PluginsManager;
@@ -759,16 +758,9 @@ impl ExternalAgentConfigService {
                     })
                     .await
                 {
-                    Ok(result) => match ConfigEditsBuilder::new(self.codex_home.as_path())
-                        .set_plugin_enabled(&result.plugin_id.as_key(), /*enabled*/ true)
-                        .apply()
-                        .await
-                    {
-                        Ok(()) => outcome.succeeded_plugin_ids.push(result.plugin_id.as_key()),
-                        Err(_) => outcome
-                            .failed_plugin_ids
-                            .push(format!("{plugin_name}@{marketplace_name}")),
-                    },
+                    Ok(_) => outcome
+                        .succeeded_plugin_ids
+                        .push(format!("{plugin_name}@{marketplace_name}")),
                     Err(_) => outcome
                         .failed_plugin_ids
                         .push(format!("{plugin_name}@{marketplace_name}")),

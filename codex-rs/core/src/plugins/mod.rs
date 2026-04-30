@@ -4,20 +4,22 @@ mod render;
 #[cfg(test)]
 pub(crate) mod test_support;
 
-pub use codex_core_plugins::LoadedPlugin;
-pub use codex_core_plugins::PluginLoadOutcome;
-pub use codex_core_plugins::manager::ConfiguredMarketplace;
-pub use codex_core_plugins::manager::ConfiguredMarketplaceListOutcome;
-pub use codex_core_plugins::manager::ConfiguredMarketplacePlugin;
-pub use codex_core_plugins::manager::PluginDetail;
-pub use codex_core_plugins::manager::PluginDetailsUnavailableReason;
-pub use codex_core_plugins::manager::PluginInstallError;
-pub use codex_core_plugins::manager::PluginInstallOutcome;
-pub use codex_core_plugins::manager::PluginInstallRequest;
-pub use codex_core_plugins::manager::PluginReadOutcome;
-pub use codex_core_plugins::manager::PluginReadRequest;
-pub use codex_core_plugins::manager::PluginUninstallError;
-pub use codex_core_plugins::manager::PluginsManager;
+use codex_config::types::McpServerConfig;
+
+pub use codex_core_plugins::ConfiguredMarketplace;
+pub use codex_core_plugins::ConfiguredMarketplaceListOutcome;
+pub use codex_core_plugins::ConfiguredMarketplacePlugin;
+pub use codex_core_plugins::PluginDetail;
+pub use codex_core_plugins::PluginDetailsUnavailableReason;
+pub use codex_core_plugins::PluginInstallError;
+pub use codex_core_plugins::PluginInstallOutcome;
+pub use codex_core_plugins::PluginInstallRequest;
+pub use codex_core_plugins::PluginReadOutcome;
+pub use codex_core_plugins::PluginReadRequest;
+pub use codex_core_plugins::PluginRemoteSyncError;
+pub use codex_core_plugins::PluginUninstallError;
+pub use codex_core_plugins::PluginsManager;
+pub use codex_core_plugins::RemotePluginSyncResult;
 pub use codex_core_plugins::marketplace_upgrade::ConfiguredMarketplaceUpgradeError as PluginMarketplaceUpgradeError;
 pub use codex_core_plugins::marketplace_upgrade::ConfiguredMarketplaceUpgradeOutcome as PluginMarketplaceUpgradeOutcome;
 pub use codex_plugin::AppConnectorId;
@@ -27,6 +29,9 @@ pub use codex_plugin::PluginId;
 pub use codex_plugin::PluginIdError;
 pub use codex_plugin::PluginTelemetryMetadata;
 pub use codex_plugin::validate_plugin_segment;
+
+pub type LoadedPlugin = codex_plugin::LoadedPlugin<McpServerConfig>;
+pub type PluginLoadOutcome = codex_plugin::PluginLoadOutcome<McpServerConfig>;
 
 pub(crate) use injection::build_plugin_injections;
 pub(crate) use render::render_explicit_plugin_instructions;

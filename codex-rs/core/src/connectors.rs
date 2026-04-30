@@ -14,7 +14,7 @@ pub use codex_app_server_protocol::AppInfo;
 pub use codex_app_server_protocol::AppMetadata;
 use codex_connectors::AllConnectorsCacheKey;
 use codex_connectors::DirectoryListResponse;
-use codex_core_plugins::discoverable::list_tool_suggest_discoverable_plugins;
+use codex_core_plugins::list_tool_suggest_discoverable_plugins;
 use codex_exec_server::EnvironmentManager;
 use codex_exec_server::EnvironmentManagerArgs;
 use codex_exec_server::ExecServerRuntimePaths;

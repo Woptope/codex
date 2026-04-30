@@ -2,10 +2,6 @@ use super::*;
 use crate::error_code::internal_error;
 use crate::error_code::invalid_request;
 use codex_app_server_protocol::PluginInstallPolicy;
-use codex_core::config::edit::ConfigEditsBuilder;
-use codex_core_plugins::loader::installed_plugin_telemetry_metadata;
-use codex_core_plugins::loader::plugin_telemetry_metadata_from_root;
-use codex_core_plugins::store::PluginStore;
 
 impl CodexMessageProcessor {
     pub(super) async fn plugin_list(
@@ -483,17 +479,6 @@ impl CodexMessageProcessor {
             .install_plugin(request)
             .await
             .map_err(Self::plugin_install_error)?;
-        let installed_plugin_id = result.plugin_id.as_key();
-        ConfigEditsBuilder::new(config.codex_home.as_path())
-            .set_plugin_enabled(&installed_plugin_id, /*enabled*/ true)
-            .apply()
-            .await
-            .map_err(|err| {
-                internal_error(format!("failed to persist installed plugin config: {err}"))
-            })?;
-        self.analytics_events_client.track_plugin_installed(
-            plugin_telemetry_metadata_from_root(&result.plugin_id, &result.installed_path).await,
-        );
         let config = match self.load_latest_config(config_cwd).await {
             Ok(config) => config,
             Err(err) => {
@@ -518,7 +503,7 @@ impl CodexMessageProcessor {
             .plugin_apps_needing_auth_for_install(
                 &config,
                 auth.as_ref().is_some_and(CodexAuth::is_chatgpt_auth),
-                &installed_plugin_id,
+                &result.plugin_id.as_key(),
                 &plugin_apps,
             )
             .await;
@@ -716,34 +701,12 @@ impl CodexMessageProcessor {
         if !plugin_id.is_empty() && is_valid_remote_plugin_id(&plugin_id) {
             return self.remote_plugin_uninstall_response(plugin_id).await;
         }
-        let parsed_plugin_id = codex_core::plugins::PluginId::parse(&plugin_id)
-            .map_err(|err| invalid_request(err.to_string()))?;
-        let plugin_telemetry =
-            match PluginStore::try_new(self.config.codex_home.as_path().to_path_buf()) {
-                Ok(store) if store.active_plugin_root(&parsed_plugin_id).is_some() => Some(
-                    installed_plugin_telemetry_metadata(
-                        self.config.codex_home.as_path(),
-                        &parsed_plugin_id,
-                    )
-                    .await,
-                ),
-                Ok(_) | Err(_) => None,
-            };
         let plugins_manager = self.thread_manager.plugins_manager();
 
         plugins_manager
             .uninstall_plugin(plugin_id.clone())
             .await
             .map_err(Self::plugin_uninstall_error)?;
-        ConfigEditsBuilder::new(self.config.codex_home.as_path())
-            .clear_plugin(&plugin_id)
-            .apply()
-            .await
-            .map_err(|err| internal_error(format!("failed to clear plugin config: {err}")))?;
-        if let Some(plugin_telemetry) = plugin_telemetry {
-            self.analytics_events_client
-                .track_plugin_uninstalled(plugin_telemetry);
-        }
         match self.load_latest_config(/*fallback_cwd*/ None).await {
             Ok(config) => self.on_effective_plugins_changed(config),
             Err(err) => {
@@ -765,6 +728,9 @@ impl CodexMessageProcessor {
             CorePluginInstallError::Marketplace(err) => {
                 Self::marketplace_error(err, "install plugin")
             }
+            CorePluginInstallError::Config(err) => {
+                internal_error(format!("failed to persist installed plugin config: {err}"))
+            }
             CorePluginInstallError::Remote(err) => {
                 internal_error(format!("failed to enable remote plugin: {err}"))
             }
@@ -783,6 +749,9 @@ impl CodexMessageProcessor {
         }
 
         match err {
+            CorePluginUninstallError::Config(err) => {
+                internal_error(format!("failed to clear plugin config: {err}"))
+            }
             CorePluginUninstallError::Remote(err) => {
                 internal_error(format!("failed to uninstall remote plugin: {err}"))
             }

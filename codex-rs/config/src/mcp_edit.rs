@@ -12,6 +12,7 @@ use toml_edit::Item as TomlItem;
 use toml_edit::Table as TomlTable;
 use toml_edit::value;
 
+use codex_utils_path::resolve_symlink_write_paths;
 use codex_utils_path::write_atomically;
 
 use crate::AppToolApproval;
@@ -112,14 +113,23 @@ impl ConfigEditsBuilder {
 
     fn apply_blocking(self) -> std::io::Result<()> {
         let config_path = self.codex_home.join(CONFIG_TOML_FILE);
-        let mut doc = read_or_create_document(&config_path)?;
+        let write_paths = resolve_symlink_write_paths(&config_path)?;
+        let mut doc = match write_paths.read_path.as_deref() {
+            Some(read_path) => read_or_create_document(read_path)?,
+            None => DocumentMut::new(),
+        };
+        let mut mutated = false;
         if let Some(servers) = self.mcp_servers.as_ref() {
             replace_mcp_servers(&mut doc, servers);
+            mutated = true;
         }
         for edit in &self.plugin_edits {
-            apply_plugin_config_edit(&mut doc, edit);
+            mutated |= apply_plugin_config_edit(&mut doc, edit);
         }
-        write_atomically(&config_path, &doc.to_string())
+        if !mutated {
+            return Ok(());
+        }
+        write_atomically(&write_paths.write_path, &doc.to_string())
     }
 }
 
@@ -148,31 +158,56 @@ fn replace_mcp_servers(doc: &mut DocumentMut, servers: &BTreeMap<String, McpServ
     root.insert("mcp_servers", TomlItem::Table(table));
 }
 
-fn apply_plugin_config_edit(doc: &mut DocumentMut, edit: &PluginConfigEdit) {
+fn apply_plugin_config_edit(doc: &mut DocumentMut, edit: &PluginConfigEdit) -> bool {
     match edit {
         PluginConfigEdit::SetEnabled { plugin_id, enabled } => {
-            set_plugin_enabled(doc, plugin_id, *enabled);
+            set_plugin_enabled(doc, plugin_id, *enabled)
         }
-        PluginConfigEdit::Clear { plugin_id } => {
-            clear_plugin(doc, plugin_id);
-        }
+        PluginConfigEdit::Clear { plugin_id } => clear_plugin(doc, plugin_id),
     }
 }
 
-fn set_plugin_enabled(doc: &mut DocumentMut, plugin_id: &str, enabled: bool) {
+fn set_plugin_enabled(doc: &mut DocumentMut, plugin_id: &str, enabled: bool) -> bool {
     let root = doc.as_table_mut();
     let plugins = ensure_table(root, "plugins", /*implicit*/ true);
     let plugin = ensure_table(plugins, plugin_id, /*implicit*/ false);
-    plugin["enabled"] = value(enabled);
+    let mut replacement = value(enabled);
+    if let Some(existing) = plugin.get("enabled") {
+        preserve_decor(existing, &mut replacement);
+    }
+    plugin["enabled"] = replacement;
+    true
 }
 
-fn clear_plugin(doc: &mut DocumentMut, plugin_id: &str) {
+fn clear_plugin(doc: &mut DocumentMut, plugin_id: &str) -> bool {
     let root = doc.as_table_mut();
-    if !root.contains_key("plugins") {
-        return;
+    let Some(item) = root.get_mut("plugins") else {
+        return false;
+    };
+    match item {
+        TomlItem::Table(plugins) => plugins.remove(plugin_id).is_some(),
+        TomlItem::Value(value) => {
+            let Some(inline) = value.as_inline_table().cloned() else {
+                return false;
+            };
+            *item = TomlItem::Table(table_from_inline(&inline, /*implicit*/ true));
+            if let TomlItem::Table(plugins) = item {
+                return plugins.remove(plugin_id).is_some();
+            }
+            false
+        }
+        _ => false,
     }
-    let plugins = ensure_table(root, "plugins", /*implicit*/ true);
-    plugins.remove(plugin_id);
+}
+
+fn preserve_decor(existing: &TomlItem, replacement: &mut TomlItem) {
+    if let (TomlItem::Value(existing_value), TomlItem::Value(replacement_value)) =
+        (existing, replacement)
+    {
+        replacement_value
+            .decor_mut()
+            .clone_from(existing_value.decor());
+    }
 }
 
 fn ensure_table<'a>(parent: &'a mut TomlTable, key: &str, implicit: bool) -> &'a mut TomlTable {

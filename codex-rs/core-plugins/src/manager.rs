@@ -3,12 +3,14 @@ use crate::PluginLoadOutcome;
 use crate::installed_marketplaces::installed_marketplace_roots_from_layer_stack;
 use crate::loader::configured_curated_plugin_ids_from_codex_home;
 use crate::loader::curated_plugin_cache_version;
+use crate::loader::installed_plugin_telemetry_metadata;
 use crate::loader::load_plugin_apps;
 use crate::loader::load_plugin_mcp_servers;
 use crate::loader::load_plugin_skills;
 use crate::loader::load_plugins_from_layer_stack;
 use crate::loader::log_plugin_load_errors;
 use crate::loader::materialize_marketplace_plugin_source;
+use crate::loader::plugin_telemetry_metadata_from_root;
 use crate::loader::refresh_curated_plugin_cache;
 use crate::loader::refresh_non_curated_plugin_cache;
 use crate::loader::refresh_non_curated_plugin_cache_force_reinstall;
@@ -44,6 +46,7 @@ use crate::startup_sync::sync_openai_plugins_repo;
 use crate::store::PluginInstallResult as StorePluginInstallResult;
 use crate::store::PluginStore;
 use crate::store::PluginStoreError;
+use codex_analytics::AnalyticsEventsClient;
 use codex_config::ConfigEditsBuilder;
 use codex_config::ConfigLayerStack;
 use codex_config::types::PluginConfig;
@@ -285,6 +288,14 @@ pub enum PluginRemoteSyncError {
     #[error("duplicate remote plugin `{plugin_name}` in sync response")]
     DuplicateRemotePlugin { plugin_name: String },
 
+    #[error(
+        "remote plugin `{plugin_name}` was not found in local marketplace `{marketplace_name}`"
+    )]
+    UnknownRemotePlugin {
+        plugin_name: String,
+        marketplace_name: String,
+    },
+
     #[error("{0}")]
     InvalidPluginId(#[from] PluginIdError),
 
@@ -353,6 +364,7 @@ pub struct PluginsManager {
     remote_installed_plugins_cache_refresh_state: RwLock<RemoteInstalledPluginsCacheRefreshState>,
     remote_sync_lock: Semaphore,
     restriction_product: Option<Product>,
+    analytics_events_client: RwLock<Option<AnalyticsEventsClient>>,
 }
 
 #[derive(Clone)]
@@ -394,7 +406,16 @@ impl PluginsManager {
             ),
             remote_sync_lock: Semaphore::new(/*permits*/ 1),
             restriction_product,
+            analytics_events_client: RwLock::new(None),
         }
+    }
+
+    pub fn set_analytics_events_client(&self, analytics_events_client: AnalyticsEventsClient) {
+        let mut stored_client = match self.analytics_events_client.write() {
+            Ok(client_guard) => client_guard,
+            Err(err) => err.into_inner(),
+        };
+        *stored_client = Some(analytics_events_client);
     }
 
     fn restriction_product_matches(&self, products: Option<&[Product]>) -> bool {
@@ -572,7 +593,7 @@ impl PluginsManager {
     }
 
     #[doc(hidden)]
-    pub fn write_remote_installed_plugins_cache(
+    pub(crate) fn write_remote_installed_plugins_cache(
         &self,
         plugins: Vec<RemoteInstalledPlugin>,
     ) -> bool {
@@ -821,6 +842,23 @@ impl PluginsManager {
         .await
         .map_err(PluginInstallError::join)??;
 
+        ConfigEditsBuilder::new(&self.codex_home)
+            .set_plugin_enabled(&result.plugin_id.as_key(), /*enabled*/ true)
+            .apply()
+            .await
+            .map_err(anyhow::Error::from)?;
+
+        let analytics_events_client = match self.analytics_events_client.read() {
+            Ok(client) => client.clone(),
+            Err(err) => err.into_inner().clone(),
+        };
+        if let Some(analytics_events_client) = analytics_events_client {
+            analytics_events_client.track_plugin_installed(
+                plugin_telemetry_metadata_from_root(&result.plugin_id, &result.installed_path)
+                    .await,
+            );
+        }
+
         Ok(PluginInstallOutcome {
             plugin_id: result.plugin_id,
             plugin_version: result.plugin_version,
@@ -856,11 +894,32 @@ impl PluginsManager {
     }
 
     async fn uninstall_plugin_id(&self, plugin_id: PluginId) -> Result<(), PluginUninstallError> {
+        let plugin_telemetry = if self.store.active_plugin_root(&plugin_id).is_some() {
+            Some(installed_plugin_telemetry_metadata(self.codex_home.as_path(), &plugin_id).await)
+        } else {
+            None
+        };
         let store = self.store.clone();
         let plugin_id_for_store = plugin_id.clone();
         tokio::task::spawn_blocking(move || store.uninstall(&plugin_id_for_store))
             .await
             .map_err(PluginUninstallError::join)??;
+
+        ConfigEditsBuilder::new(&self.codex_home)
+            .clear_plugin(&plugin_id.as_key())
+            .apply()
+            .await
+            .map_err(anyhow::Error::from)?;
+
+        let analytics_events_client = match self.analytics_events_client.read() {
+            Ok(client) => client.clone(),
+            Err(err) => err.into_inner().clone(),
+        };
+        if let Some(plugin_telemetry) = plugin_telemetry
+            && let Some(analytics_events_client) = analytics_events_client
+        {
+            analytics_events_client.track_plugin_uninstalled(plugin_telemetry);
+        }
 
         Ok(())
     }
@@ -1189,7 +1248,7 @@ impl PluginsManager {
         })
     }
 
-    pub async fn read_plugin_detail_for_marketplace_plugin(
+    pub(crate) async fn read_plugin_detail_for_marketplace_plugin(
         &self,
         config_layer_stack: &ConfigLayerStack,
         marketplace_name: &str,
@@ -1813,6 +1872,9 @@ pub enum PluginInstallError {
     #[error("{0}")]
     Store(#[from] PluginStoreError),
 
+    #[error("{0}")]
+    Config(#[from] anyhow::Error),
+
     #[error("failed to join plugin install task: {0}")]
     Join(#[from] tokio::task::JoinError),
 }
@@ -1846,6 +1908,9 @@ pub enum PluginUninstallError {
 
     #[error("{0}")]
     Store(#[from] PluginStoreError),
+
+    #[error("{0}")]
+    Config(#[from] anyhow::Error),
 
     #[error("failed to join plugin uninstall task: {0}")]
     Join(#[from] tokio::task::JoinError),
