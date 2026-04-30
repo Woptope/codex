@@ -1,0 +1,12 @@
+{
+  "name": "continue-button-companion",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "serve": "node scripts/serve.mjs",
+    "start": "node scripts/serve.mjs",
+    "test": "node --experimental-strip-types --test test/*.test.ts"
+  }
+}
