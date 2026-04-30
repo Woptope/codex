@@ -621,6 +621,37 @@ remote_plugin = true
     assert_eq!(outcome, PluginLoadOutcome::default());
 }
 
+#[tokio::test]
+async fn remote_installed_cache_ignores_plugins_with_stale_local_version() {
+    let codex_home = TempDir::new().unwrap();
+    write_plugin(
+        &codex_home.path().join("plugins/cache/chatgpt-global"),
+        "linear/1.0.0",
+        "linear",
+    );
+    write_file(
+        &codex_home.path().join(CONFIG_TOML_FILE),
+        r#"[features]
+plugins = true
+remote_plugin = true
+"#,
+    );
+
+    let config = load_config(codex_home.path(), codex_home.path()).await;
+    let manager = PluginsManager::new(codex_home.path().to_path_buf());
+    manager.write_remote_installed_plugins_cache(vec![RemoteInstalledPlugin {
+        marketplace_name: "chatgpt-global".to_string(),
+        id: "plugins~Plugin_linear".to_string(),
+        name: "linear".to_string(),
+        enabled: true,
+        release_version: Some("2.0.0".to_string()),
+        bundle_download_url: Some("https://example.com/linear.tar.gz".to_string()),
+    }]);
+
+    let outcome = manager.plugins_for_test_config(&config).await;
+    assert_eq!(outcome, PluginLoadOutcome::default());
+}
+
 async fn mount_remote_installed_plugin_pages(
     server: &MockServer,
     global_plugins: &str,
@@ -688,6 +719,40 @@ fn remote_installed_plugin_json(plugin_name: &str, enabled: bool) -> String {
     )
 }
 
+fn remote_installed_plugin_json_with_release(
+    plugin_name: &str,
+    enabled: bool,
+    version: &str,
+    bundle_download_url: Option<&str>,
+) -> String {
+    let bundle_download_url = bundle_download_url
+        .map(|url| format!(r#""bundle_download_url": "{url}","#))
+        .unwrap_or_default();
+    format!(
+        r#"{{
+      "id": "plugins~Plugin_{plugin_name}",
+      "name": "{plugin_name}",
+      "scope": "GLOBAL",
+      "installation_policy": "AVAILABLE",
+      "authentication_policy": "ON_USE",
+      "release": {{
+        "version": "{version}",
+        {bundle_download_url}
+        "display_name": "{plugin_name}",
+        "description": "{plugin_name} plugin",
+        "app_ids": [],
+        "interface": {{
+          "short_description": "{plugin_name}",
+          "capabilities": []
+        }},
+        "skills": []
+      }},
+      "enabled": {enabled},
+      "disabled_skill_names": []
+    }}"#
+    )
+}
+
 async fn wait_for_counter(counter: &AtomicUsize, expected: usize) {
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
@@ -699,6 +764,46 @@ async fn wait_for_counter(counter: &AtomicUsize, expected: usize) {
     })
     .await
     .expect("counter should reach expected value");
+}
+
+#[tokio::test]
+async fn remote_installed_plugins_cache_refresh_does_not_publish_stale_plugin_when_bundle_unavailable()
+ {
+    let tmp = tempfile::tempdir().unwrap();
+    write_plugin(
+        &tmp.path().join("plugins/cache/chatgpt-global"),
+        "linear/1.0.0",
+        "linear",
+    );
+    write_file(
+        &tmp.path().join(CONFIG_TOML_FILE),
+        r#"[features]
+plugins = true
+remote_plugin = true
+"#,
+    );
+
+    let server = MockServer::start().await;
+    mount_remote_installed_plugin_pages(
+        &server,
+        &remote_installed_plugin_json_with_release("linear", true, "2.0.0", None),
+        "",
+    )
+    .await;
+
+    let config = load_config(tmp.path(), tmp.path()).await;
+    let manager = PluginsManager::new(tmp.path().to_path_buf());
+    let changed = manager
+        .refresh_remote_installed_plugins_cache(
+            &remote_plugin_service_config(&format!("{}/backend-api/", server.uri())),
+            Some(&CodexAuth::create_dummy_chatgpt_auth_for_testing()),
+        )
+        .await
+        .unwrap();
+
+    assert!(changed);
+    let outcome = manager.plugins_for_test_config(&config).await;
+    assert_eq!(outcome, PluginLoadOutcome::default());
 }
 
 #[tokio::test]

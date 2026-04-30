@@ -171,8 +171,12 @@ pub fn remote_installed_plugins_to_config(
                     }
                 };
             // Remote installed refresh materializes bundles before publishing state. Keep this
-            // check so partial refresh failures do not make missing local bundles effective.
-            store.active_plugin_root(&plugin_id)?;
+            // version check so partial refresh failures do not make missing or stale local bundles
+            // effective.
+            let release_version = plugin.release_version.as_deref()?;
+            if store.active_plugin_version(&plugin_id).as_deref() != Some(release_version) {
+                return None;
+            }
             Some((
                 plugin_id.as_key(),
                 PluginConfig {

@@ -1708,7 +1708,8 @@ impl PluginsManager {
         let installed_plugins =
             crate::remote::fetch_remote_installed_plugins(service_config, auth).await?;
         let mut bundles_changed = false;
-        for plugin in &installed_plugins {
+        let mut publishable_plugins = Vec::new();
+        for plugin in installed_plugins {
             let validated_bundle = match validate_remote_plugin_bundle(
                 &plugin.id,
                 &plugin.marketplace_name,
@@ -1728,12 +1729,12 @@ impl PluginsManager {
                     continue;
                 }
             };
-            if self
-                .store
-                .active_plugin_version(&validated_bundle.plugin_id)
-                .as_deref()
-                == Some(validated_bundle.plugin_version.as_str())
+            let plugin_id = validated_bundle.plugin_id.clone();
+            let plugin_version = validated_bundle.plugin_version.clone();
+            if self.store.active_plugin_version(&plugin_id).as_deref()
+                == Some(plugin_version.as_str())
             {
+                publishable_plugins.push(plugin);
                 continue;
             }
             match download_and_install_remote_plugin_bundle(
@@ -1750,6 +1751,7 @@ impl PluginsManager {
                         path = %result.installed_path.display(),
                         "installed remote plugin bundle during installed-plugin refresh"
                     );
+                    publishable_plugins.push(plugin);
                 }
                 Err(err) => {
                     warn!(
@@ -1762,7 +1764,11 @@ impl PluginsManager {
                 }
             }
         }
-        Ok(self.write_remote_installed_plugins_cache(installed_plugins) || bundles_changed)
+        let cache_changed = self.write_remote_installed_plugins_cache(publishable_plugins);
+        if bundles_changed {
+            self.clear_enabled_outcome_cache();
+        }
+        Ok(cache_changed || bundles_changed)
     }
 
     fn run_non_curated_plugin_cache_refresh_loop(self: Arc<Self>) {
