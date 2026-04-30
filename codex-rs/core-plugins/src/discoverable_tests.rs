@@ -58,10 +58,12 @@ async fn list_tool_suggest_discoverable_plugins_returns_microsoft_curated_plugin
     );
     write_plugins_feature_config(codex_home.path());
 
-    let config = load_plugins_config(codex_home.path()).await;
-    let discoverable_plugins = list_tool_suggest_discoverable_plugins(&config)
-        .await
-        .unwrap();
+    let discoverable_plugins = list_tool_suggest_discoverable_plugins_for_test(
+        codex_home.path(),
+        /*plugins_enabled*/ true,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(
         discoverable_plugins

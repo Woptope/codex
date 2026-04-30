@@ -19,6 +19,8 @@ use codex_config::types::AuthCredentialsStoreMode;
 use codex_core::config::set_project_trust_level;
 use codex_protocol::config_types::TrustLevel;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use flate2::Compression;
+use flate2::write::GzEncoder;
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 use tokio::time::timeout;
@@ -32,6 +34,8 @@ use wiremock::matchers::query_param;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 const TEST_CURATED_PLUGIN_SHA: &str = "0123456789abcdef0123456789abcdef01234567";
+const TEST_ALLOW_HTTP_REMOTE_PLUGIN_BUNDLE_DOWNLOADS: &str =
+    "CODEX_TEST_ALLOW_HTTP_REMOTE_PLUGIN_BUNDLE_DOWNLOADS";
 const ALTERNATE_MARKETPLACE_RELATIVE_PATH: &str = ".claude-plugin/marketplace.json";
 const ALTERNATE_PLUGIN_MANIFEST_RELATIVE_PATH: &str = ".claude-plugin/plugin.json";
 
@@ -1109,6 +1113,102 @@ async fn app_server_startup_refreshes_remote_installed_cache_each_process() -> R
 }
 
 #[tokio::test]
+async fn app_server_startup_downloads_missing_remote_installed_plugin_bundle() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    let server = MockServer::start().await;
+    write_remote_plugin_catalog_config(
+        codex_home.path(),
+        &format!("{}/backend-api/", server.uri()),
+    )?;
+    write_chatgpt_auth(
+        codex_home.path(),
+        ChatGptAuthFixture::new("chatgpt-token")
+            .account_id("account-123")
+            .chatgpt_user_id("user-123")
+            .chatgpt_account_id("account-123"),
+        AuthCredentialsStoreMode::File,
+    )?;
+
+    let bundle_url =
+        mount_remote_plugin_bundle(&server, remote_plugin_bundle_tar_gz_bytes("linear")?).await;
+    let global_installed_body = format!(
+        r#"{{
+  "plugins": [
+    {{
+      "id": "plugins~Plugin_linear",
+      "name": "linear",
+      "scope": "GLOBAL",
+      "installation_policy": "AVAILABLE",
+      "authentication_policy": "ON_USE",
+      "release": {{
+        "version": "1.2.3",
+        "bundle_download_url": "{bundle_url}",
+        "display_name": "Linear",
+        "description": "Track work in Linear",
+        "app_ids": [],
+        "interface": {{}},
+        "skills": []
+      }},
+      "enabled": true,
+      "disabled_skill_names": []
+    }}
+  ],
+  "pagination": {{
+    "limit": 50,
+    "next_page_token": null
+  }}
+}}"#
+    );
+    let empty_page_body = r#"{
+  "plugins": [],
+  "pagination": {
+    "limit": 50,
+    "next_page_token": null
+  }
+}"#;
+    for (scope, body) in [
+        ("GLOBAL", global_installed_body.as_str()),
+        ("WORKSPACE", empty_page_body),
+    ] {
+        Mock::given(method("GET"))
+            .and(path("/backend-api/ps/plugins/installed"))
+            .and(query_param("scope", scope))
+            .and(query_param("includeDownloadUrls", "true"))
+            .and(header("authorization", "Bearer chatgpt-token"))
+            .and(header("chatgpt-account-id", "account-123"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(body))
+            .mount(&server)
+            .await;
+    }
+
+    let mut mcp = McpProcess::new_with_env_and_plugin_startup_tasks(
+        codex_home.path(),
+        &[(TEST_ALLOW_HTTP_REMOTE_PLUGIN_BUNDLE_DOWNLOADS, Some("1"))],
+    )
+    .await?;
+    timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
+
+    let installed_manifest = codex_home
+        .path()
+        .join("plugins/cache/chatgpt-global/linear/1.2.3/.codex-plugin/plugin.json");
+    timeout(DEFAULT_TIMEOUT, async {
+        loop {
+            if installed_manifest.is_file() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await?;
+    assert_eq!(
+        std::fs::read_to_string(installed_manifest)?,
+        r#"{"name":"linear"}"#
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn plugin_list_includes_remote_marketplaces_when_remote_plugin_enabled() -> Result<()> {
     let codex_home = TempDir::new()?;
     let server = MockServer::start().await;
@@ -1666,4 +1766,43 @@ fn write_openai_curated_marketplace(
         format!("{TEST_CURATED_PLUGIN_SHA}\n"),
     )?;
     Ok(())
+}
+
+async fn mount_remote_plugin_bundle(server: &MockServer, body: Vec<u8>) -> String {
+    Mock::given(method("GET"))
+        .and(path("/bundles/linear.tar.gz"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "application/gzip")
+                .set_body_bytes(body),
+        )
+        .mount(server)
+        .await;
+    format!("{}/bundles/linear.tar.gz", server.uri())
+}
+
+fn remote_plugin_bundle_tar_gz_bytes(plugin_name: &str) -> Result<Vec<u8>> {
+    let manifest = format!(r#"{{"name":"{plugin_name}"}}"#);
+    let skill = "# Plan Work\n\nTrack work in Linear.\n";
+    let encoder = GzEncoder::new(Vec::new(), Compression::default());
+    let mut tar = tar::Builder::new(encoder);
+    for (path, contents, mode) in [
+        (
+            ".codex-plugin/plugin.json",
+            manifest.as_bytes(),
+            /*mode*/ 0o644,
+        ),
+        (
+            "skills/plan-work/SKILL.md",
+            skill.as_bytes(),
+            /*mode*/ 0o644,
+        ),
+    ] {
+        let mut header = tar::Header::new_gnu();
+        header.set_size(contents.len() as u64);
+        header.set_mode(mode);
+        header.set_cksum();
+        tar.append_data(&mut header, path, contents)?;
+    }
+    Ok(tar.into_inner()?.finish()?)
 }

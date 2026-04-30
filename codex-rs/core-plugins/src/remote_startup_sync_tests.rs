@@ -56,6 +56,8 @@ async fn mount_installed_plugins(server: &MockServer) {
       "installation_policy": "AVAILABLE",
       "authentication_policy": "ON_USE",
       "release": {
+        "version": "local",
+        "bundle_download_url": "https://example.com/linear.tar.gz",
         "display_name": "Linear",
         "description": "Track work in Linear",
         "app_ids": [],
@@ -78,6 +80,7 @@ async fn mount_installed_plugins(server: &MockServer) {
     Mock::given(method("GET"))
         .and(path("/backend-api/ps/plugins/installed"))
         .and(query_param("scope", "GLOBAL"))
+        .and(query_param("includeDownloadUrls", "true"))
         .and(header("authorization", "Bearer Access Token"))
         .and(header("chatgpt-account-id", "account_id"))
         .respond_with(ResponseTemplate::new(200).set_body_string(global_installed_body))
@@ -86,6 +89,7 @@ async fn mount_installed_plugins(server: &MockServer) {
     Mock::given(method("GET"))
         .and(path("/backend-api/ps/plugins/installed"))
         .and(query_param("scope", "WORKSPACE"))
+        .and(query_param("includeDownloadUrls", "true"))
         .and(header("authorization", "Bearer Access Token"))
         .and(header("chatgpt-account-id", "account_id"))
         .respond_with(ResponseTemplate::new(200).set_body_string(empty_page_body))

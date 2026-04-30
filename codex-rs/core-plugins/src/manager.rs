@@ -35,6 +35,8 @@ use crate::marketplace_upgrade::upgrade_configured_git_marketplaces;
 use crate::remote::RemoteInstalledPlugin;
 use crate::remote::RemotePluginCatalogError;
 use crate::remote::RemotePluginServiceConfig;
+use crate::remote_bundle::download_and_install_remote_plugin_bundle;
+use crate::remote_bundle::validate_remote_plugin_bundle;
 use crate::remote_legacy::RemotePluginFetchError;
 use crate::remote_legacy::RemotePluginMutationError;
 use crate::remote_startup_sync::RemoteStartupPluginSyncRequest;
@@ -1376,9 +1378,62 @@ impl PluginsManager {
     ) -> Result<bool, RemotePluginCatalogError> {
         let installed_plugins =
             crate::remote::fetch_remote_installed_plugins(service_config, auth).await?;
-        // TODO(remote plugins): reconcile missing or stale local bundles before
-        // publishing remote installed state as effective local plugin config.
-        Ok(self.write_remote_installed_plugins_cache(installed_plugins))
+        let mut bundles_changed = false;
+        for plugin in &installed_plugins {
+            let validated_bundle = match validate_remote_plugin_bundle(
+                &plugin.id,
+                &plugin.marketplace_name,
+                &plugin.name,
+                plugin.release_version.as_deref(),
+                plugin.bundle_download_url.as_deref(),
+            ) {
+                Ok(bundle) => bundle,
+                Err(err) => {
+                    warn!(
+                        remote_plugin_id = %plugin.id,
+                        marketplace = %plugin.marketplace_name,
+                        plugin = %plugin.name,
+                        error = %err,
+                        "failed to validate remote installed plugin bundle"
+                    );
+                    continue;
+                }
+            };
+            if self
+                .store
+                .active_plugin_version(&validated_bundle.plugin_id)
+                .as_deref()
+                == Some(validated_bundle.plugin_version.as_str())
+            {
+                continue;
+            }
+            match download_and_install_remote_plugin_bundle(
+                self.codex_home.clone(),
+                validated_bundle,
+            )
+            .await
+            {
+                Ok(result) => {
+                    bundles_changed = true;
+                    tracing::info!(
+                        plugin = %result.plugin_id.as_key(),
+                        version = %result.plugin_version,
+                        path = %result.installed_path.display(),
+                        "installed remote plugin bundle during installed-plugin refresh"
+                    );
+                }
+                Err(err) => {
+                    warn!(
+                        remote_plugin_id = %plugin.id,
+                        marketplace = %plugin.marketplace_name,
+                        plugin = %plugin.name,
+                        error = %err,
+                        "failed to install remote plugin bundle during installed-plugin refresh"
+                    );
+                }
+            }
+        }
+        Ok(self.write_remote_installed_plugins_cache(installed_plugins) || bundles_changed)
     }
 
     fn run_non_curated_plugin_cache_refresh_loop(self: Arc<Self>) {

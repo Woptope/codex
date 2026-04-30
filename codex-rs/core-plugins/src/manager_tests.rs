@@ -581,6 +581,8 @@ remote_plugin = true
         id: "plugins~Plugin_linear".to_string(),
         name: "linear".to_string(),
         enabled: true,
+        release_version: Some("local".to_string()),
+        bundle_download_url: Some("https://example.com/linear.tar.gz".to_string()),
     }]);
 
     let outcome = manager.plugins_for_test_config(&config).await;
@@ -610,6 +612,8 @@ remote_plugin = true
         id: "plugins~Plugin_linear".to_string(),
         name: "linear".to_string(),
         enabled: true,
+        release_version: Some("local".to_string()),
+        bundle_download_url: Some("https://example.com/linear.tar.gz".to_string()),
     }]);
 
     let outcome = manager.plugins_for_test_config(&config).await;
@@ -638,6 +642,7 @@ async fn mount_remote_installed_plugin_pages(
     Mock::given(method("GET"))
         .and(path("/backend-api/ps/plugins/installed"))
         .and(query_param("scope", "GLOBAL"))
+        .and(query_param("includeDownloadUrls", "true"))
         .and(header("authorization", "Bearer Access Token"))
         .and(header("chatgpt-account-id", "account_id"))
         .respond_with(ResponseTemplate::new(200).set_body_string(body_for_plugins(global_plugins)))
@@ -646,6 +651,7 @@ async fn mount_remote_installed_plugin_pages(
     Mock::given(method("GET"))
         .and(path("/backend-api/ps/plugins/installed"))
         .and(query_param("scope", "WORKSPACE"))
+        .and(query_param("includeDownloadUrls", "true"))
         .and(header("authorization", "Bearer Access Token"))
         .and(header("chatgpt-account-id", "account_id"))
         .respond_with(
@@ -664,6 +670,8 @@ fn remote_installed_plugin_json(plugin_name: &str, enabled: bool) -> String {
       "installation_policy": "AVAILABLE",
       "authentication_policy": "ON_USE",
       "release": {{
+        "version": "local",
+        "bundle_download_url": "https://example.com/{plugin_name}.tar.gz",
         "display_name": "{plugin_name}",
         "description": "{plugin_name} plugin",
         "app_ids": [],
@@ -809,6 +817,8 @@ async fn remote_installed_plugins_cache_refresh_clears_stale_cache_when_auth_is_
         id: "plugins~Plugin_linear".to_string(),
         name: "linear".to_string(),
         enabled: true,
+        release_version: Some("local".to_string()),
+        bundle_download_url: Some("https://example.com/linear.tar.gz".to_string()),
     }]);
     let notification_count = Arc::new(AtomicUsize::new(0));
     let notification_count_for_callback = Arc::clone(&notification_count);

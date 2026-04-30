@@ -170,9 +170,8 @@ pub fn remote_installed_plugins_to_config(
                         return None;
                     }
                 };
-            // TODO(remote plugins): download or update missing local bundles during remote
-            // installed reconciliation. Until then, only publish remote installed state for
-            // bundles already present in the local plugin cache.
+            // Remote installed refresh materializes bundles before publishing state. Keep this
+            // check so partial refresh failures do not make missing local bundles effective.
             store.active_plugin_root(&plugin_id)?;
             Some((
                 plugin_id.as_key(),
