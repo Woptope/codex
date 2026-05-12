@@ -1,5 +1,5 @@
+use crate::auto_handoff::AutoHandoffAction;
 use crate::auto_handoff::AutoHandoffMetadata;
-use crate::auto_handoff::AutoHandoffRequest;
 use crate::auto_handoff::AutoHandoffState;
 use crate::outgoing_message::ConnectionId;
 use crate::outgoing_message::ConnectionRequestId;
@@ -163,8 +163,16 @@ impl ThreadState {
         event: &EventMsg,
         threshold: Option<u32>,
         metadata: AutoHandoffMetadata<'_>,
-    ) -> Option<AutoHandoffRequest> {
+    ) -> Option<AutoHandoffAction> {
         self.auto_handoff.record_event(event, threshold, metadata)
+    }
+
+    pub(crate) fn mark_auto_handoff_preparation_submitted(&mut self, turn_id: String) -> bool {
+        self.auto_handoff.mark_preparation_submitted(turn_id)
+    }
+
+    pub(crate) fn mark_auto_handoff_preparation_submission_failed(&mut self) {
+        self.auto_handoff.mark_preparation_submission_failed();
     }
 }
 

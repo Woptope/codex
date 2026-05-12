@@ -521,7 +521,6 @@ pub(crate) struct ChatWidget {
     bottom_pane: BottomPane,
     transcript: TranscriptState,
     auto_handoff: AutoHandoffState,
-    pending_auto_handoff_prompt: Option<String>,
     config: Config,
     raw_output_mode: bool,
     /// Runtime value resolved by core. `config.service_tier` remains the explicit user choice.

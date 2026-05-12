@@ -1,7 +1,9 @@
 use super::thread_processor::build_thread_from_snapshot;
 use super::*;
+use crate::auto_handoff::AutoHandoffAction;
 use crate::auto_handoff::AutoHandoffMetadata;
-use crate::auto_handoff::AutoHandoffRequest;
+use crate::auto_handoff::AutoHandoffPrepareRequest;
+use crate::auto_handoff::AutoHandoffReplacementRequest;
 
 pub(super) const THREAD_UNLOADING_DELAY: Duration = Duration::from_secs(30 * 60);
 
@@ -308,7 +310,7 @@ pub(super) async fn ensure_listener_task_running(
                     // Track the event before emitting any typed translations
                     // so thread-local state such as raw event opt-in stays
                     // synchronized with the conversation.
-                    let (raw_events_enabled, auto_handoff_request) = {
+                    let (raw_events_enabled, auto_handoff_action) = {
                         let mut thread_state = thread_state.lock().await;
                         thread_state.track_current_turn_event(&event.id, &event.msg);
                         let metadata = AutoHandoffMetadata {
@@ -359,15 +361,28 @@ pub(super) async fn ensure_listener_task_running(
                     )
                     .await;
 
-                    if let Some(auto_handoff_request) = auto_handoff_request {
-                        spawn_auto_handoff_thread(
-                            listener_task_context_for_handoff.clone(),
-                            conversation_id,
-                            conversation.clone(),
-                            subscribed_connection_ids,
-                            raw_events_enabled,
-                            auto_handoff_request,
-                        );
+                    if let Some(auto_handoff_action) = auto_handoff_action {
+                        match auto_handoff_action {
+                            AutoHandoffAction::PreparePrompt(request) => {
+                                submit_auto_handoff_preparation_prompt(
+                                    conversation_id,
+                                    conversation.clone(),
+                                    thread_state.clone(),
+                                    request,
+                                )
+                                .await;
+                            }
+                            AutoHandoffAction::StartReplacement(request) => {
+                                spawn_auto_handoff_thread(
+                                    listener_task_context_for_handoff.clone(),
+                                    conversation_id,
+                                    conversation.clone(),
+                                    subscribed_connection_ids,
+                                    raw_events_enabled,
+                                    request,
+                                );
+                            }
+                        }
                     }
                 }
                 unloading_watchers_open = unloading_state.wait_for_unloading_trigger() => {
@@ -480,7 +495,7 @@ fn spawn_auto_handoff_thread(
     source_thread: Arc<CodexThread>,
     subscribed_connection_ids: Vec<ConnectionId>,
     raw_events_enabled: bool,
-    auto_handoff_request: AutoHandoffRequest,
+    auto_handoff_request: AutoHandoffReplacementRequest,
 ) {
     tokio::spawn(async move {
         start_auto_handoff_thread(
@@ -495,13 +510,53 @@ fn spawn_auto_handoff_thread(
     });
 }
 
+async fn submit_auto_handoff_preparation_prompt(
+    source_thread_id: ThreadId,
+    source_thread: Arc<CodexThread>,
+    source_thread_state: Arc<Mutex<ThreadState>>,
+    request: AutoHandoffPrepareRequest,
+) {
+    let turn_id = match source_thread
+        .submit(Op::UserInput {
+            items: vec![CoreInputItem::Text {
+                text: request.prompt,
+                text_elements: Vec::new(),
+            }],
+            environments: None,
+            final_output_json_schema: None,
+            responsesapi_client_metadata: None,
+        })
+        .await
+    {
+        Ok(turn_id) => turn_id,
+        Err(err) => {
+            warn!("failed to submit auto-handoff preparation prompt for {source_thread_id}: {err}");
+            source_thread_state
+                .lock()
+                .await
+                .mark_auto_handoff_preparation_submission_failed();
+            return;
+        }
+    };
+
+    if !source_thread_state
+        .lock()
+        .await
+        .mark_auto_handoff_preparation_submitted(turn_id.clone())
+    {
+        warn!(
+            "auto-handoff preparation turn {turn_id} for {source_thread_id} was not expected by thread state"
+        );
+    }
+}
+
 async fn start_auto_handoff_thread(
     listener_task_context: ListenerTaskContext,
     source_thread_id: ThreadId,
     source_thread: Arc<CodexThread>,
     subscribed_connection_ids: Vec<ConnectionId>,
     raw_events_enabled: bool,
-    auto_handoff_request: AutoHandoffRequest,
+    auto_handoff_request: AutoHandoffReplacementRequest,
 ) {
     if !listener_task_context
         .thread_state_manager
@@ -509,6 +564,10 @@ async fn start_auto_handoff_thread(
         .await
     {
         return;
+    }
+
+    if let Err(err) = source_thread.submit(Op::Interrupt).await {
+        warn!("failed to stop source thread {source_thread_id} after auto-handoff: {err}");
     }
 
     let source_config = source_thread.config().await.as_ref().clone();

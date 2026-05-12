@@ -106,7 +106,6 @@ impl ChatWidget {
             }),
             transcript: TranscriptState::new(active_cell),
             auto_handoff: AutoHandoffState::default(),
-            pending_auto_handoff_prompt: None,
             raw_output_mode: config.tui_raw_output_mode,
             config,
             effective_service_tier,

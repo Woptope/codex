@@ -255,6 +255,7 @@ async fn thread_compact_start_triggers_compaction_and_returns_empty_response() -
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn auto_handoff_after_compaction_starts_replacement_thread() -> Result<()> {
     skip_if_no_network!(Ok(()));
+    const HANDOFF_AUTO_COMPACT_LIMIT: i64 = 200_000;
 
     let server = responses::start_mock_server().await;
     let sse1 = responses::sse(vec![
@@ -266,17 +267,21 @@ async fn auto_handoff_after_compaction_starts_replacement_thread() -> Result<()>
         responses::ev_completed_with_tokens("r2", /*total_tokens*/ 200),
     ]);
     let sse3 = responses::sse(vec![
-        responses::ev_assistant_message("m3", "HANDOFF_REPLY"),
+        responses::ev_assistant_message("m3", "GENERATED_HANDOFF_PROMPT"),
         responses::ev_completed_with_tokens("r3", /*total_tokens*/ 120),
     ]);
-    let responses_log = responses::mount_sse_sequence(&server, vec![sse1, sse2, sse3]).await;
+    let sse4 = responses::sse(vec![
+        responses::ev_assistant_message("m4", "HANDOFF_REPLY"),
+        responses::ev_completed_with_tokens("r4", /*total_tokens*/ 120),
+    ]);
+    let responses_log = responses::mount_sse_sequence(&server, vec![sse1, sse2, sse3, sse4]).await;
 
     let codex_home = TempDir::new()?;
     write_mock_responses_config_toml(
         codex_home.path(),
         &server.uri(),
         &BTreeMap::default(),
-        AUTO_COMPACT_LIMIT,
+        HANDOFF_AUTO_COMPACT_LIMIT,
         /*requires_openai_auth*/ None,
         "mock_provider",
         COMPACT_PROMPT,
@@ -313,10 +318,11 @@ async fn auto_handoff_after_compaction_starts_replacement_thread() -> Result<()>
     wait_for_turn_completed(&mut mcp, &handoff.turn_id).await?;
 
     let requests = responses_log.requests();
-    assert_eq!(requests.len(), 3);
-    assert!(requests[2].body_contains_text("Continue the previous Codex session"));
-    assert!(requests[2].body_contains_text("first request"));
-    assert!(requests[2].body_contains_text("FIRST_REPLY"));
+    assert_eq!(requests.len(), 4);
+    assert!(requests[2].body_contains_text("Prepare a concise prompt"));
+    assert!(requests[2].body_contains_text("Reply only with the prompt"));
+    assert!(requests[3].body_contains_text("GENERATED_HANDOFF_PROMPT"));
+    assert!(!requests[3].body_contains_text("Prepare a concise prompt"));
 
     Ok(())
 }
