@@ -44,6 +44,9 @@ pub(super) fn server_notification_thread_target(
     let thread_id = match notification {
         ServerNotification::Error(notification) => Some(notification.thread_id.as_str()),
         ServerNotification::ThreadStarted(notification) => Some(notification.thread.id.as_str()),
+        ServerNotification::ThreadAutoHandoff(notification) => {
+            Some(notification.previous_thread_id.as_str())
+        }
         ServerNotification::ThreadStatusChanged(notification) => {
             Some(notification.thread_id.as_str())
         }

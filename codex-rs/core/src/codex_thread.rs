@@ -513,6 +513,10 @@ impl CodexThread {
         self.codex.thread_environment_selections().await
     }
 
+    pub async fn dynamic_tools(&self) -> Vec<codex_protocol::dynamic_tools::DynamicToolSpec> {
+        self.codex.thread_dynamic_tools().await
+    }
+
     pub async fn read_mcp_resource(
         &self,
         server: &str,

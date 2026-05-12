@@ -3971,6 +3971,26 @@
           "properties": {
             "method": {
               "enum": [
+                "thread/autoHandoff"
+              ],
+              "title": "Thread/autoHandoffNotificationMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/v2/ThreadAutoHandoffNotification"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "title": "Thread/autoHandoffNotification",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "enum": [
                 "thread/status/changed"
               ],
               "title": "Thread/status/changedNotificationMethod",
@@ -15606,6 +15626,39 @@
           "threadId"
         ],
         "title": "ThreadArchivedNotification",
+        "type": "object"
+      },
+      "ThreadAutoHandoffNotification": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "compactionCount": {
+            "format": "uint32",
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "previousThreadId": {
+            "type": "string"
+          },
+          "thread": {
+            "$ref": "#/definitions/v2/Thread"
+          },
+          "threshold": {
+            "format": "uint32",
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "turnId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "compactionCount",
+          "previousThreadId",
+          "thread",
+          "threshold",
+          "turnId"
+        ],
+        "title": "ThreadAutoHandoffNotification",
         "type": "object"
       },
       "ThreadClosedNotification": {

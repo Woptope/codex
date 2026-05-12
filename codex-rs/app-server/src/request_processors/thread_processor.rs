@@ -4089,7 +4089,7 @@ fn permission_profile_trusts_project(
     }
 }
 
-fn build_thread_from_snapshot(
+pub(super) fn build_thread_from_snapshot(
     thread_id: ThreadId,
     session_id: String,
     config_snapshot: &ThreadConfigSnapshot,

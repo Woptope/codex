@@ -19,6 +19,7 @@ use codex_app_server_protocol::JSONRPCError;
 use codex_app_server_protocol::JSONRPCNotification;
 use codex_app_server_protocol::JSONRPCResponse;
 use codex_app_server_protocol::RequestId;
+use codex_app_server_protocol::ThreadAutoHandoffNotification;
 use codex_app_server_protocol::ThreadCompactStartParams;
 use codex_app_server_protocol::ThreadCompactStartResponse;
 use codex_app_server_protocol::ThreadItem;
@@ -35,6 +36,7 @@ use core_test_support::responses;
 use core_test_support::skip_if_no_network;
 use pretty_assertions::assert_eq;
 use std::collections::BTreeMap;
+use std::path::Path;
 use tempfile::TempDir;
 use tokio::time::timeout;
 
@@ -251,6 +253,75 @@ async fn thread_compact_start_triggers_compaction_and_returns_empty_response() -
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn auto_handoff_after_compaction_starts_replacement_thread() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = responses::start_mock_server().await;
+    let sse1 = responses::sse(vec![
+        responses::ev_assistant_message("m1", "FIRST_REPLY"),
+        responses::ev_completed_with_tokens("r1", /*total_tokens*/ 120),
+    ]);
+    let sse2 = responses::sse(vec![
+        responses::ev_assistant_message("m2", "LOCAL_SUMMARY"),
+        responses::ev_completed_with_tokens("r2", /*total_tokens*/ 200),
+    ]);
+    let sse3 = responses::sse(vec![
+        responses::ev_assistant_message("m3", "HANDOFF_REPLY"),
+        responses::ev_completed_with_tokens("r3", /*total_tokens*/ 120),
+    ]);
+    let responses_log = responses::mount_sse_sequence(&server, vec![sse1, sse2, sse3]).await;
+
+    let codex_home = TempDir::new()?;
+    write_mock_responses_config_toml(
+        codex_home.path(),
+        &server.uri(),
+        &BTreeMap::default(),
+        AUTO_COMPACT_LIMIT,
+        /*requires_openai_auth*/ None,
+        "mock_provider",
+        COMPACT_PROMPT,
+    )?;
+    append_auto_new_session_after_compactions(codex_home.path(), 1)?;
+
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let thread_id = start_thread(&mut mcp).await?;
+    send_turn_and_wait(&mut mcp, &thread_id, "first request").await?;
+
+    let compact_id = mcp
+        .send_thread_compact_start_request(ThreadCompactStartParams {
+            thread_id: thread_id.clone(),
+        })
+        .await?;
+    let compact_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(compact_id)),
+    )
+    .await??;
+    let _compact: ThreadCompactStartResponse =
+        to_response::<ThreadCompactStartResponse>(compact_resp)?;
+
+    let completed = wait_for_context_compaction_completed(&mut mcp).await?;
+    assert_eq!(completed.thread_id, thread_id);
+
+    let handoff = wait_for_thread_auto_handoff(&mut mcp).await?;
+    assert_eq!(handoff.previous_thread_id, thread_id);
+    assert_ne!(handoff.thread.id, thread_id);
+    assert_eq!(handoff.compaction_count, 1);
+    assert_eq!(handoff.threshold, 1);
+    wait_for_turn_completed(&mut mcp, &handoff.turn_id).await?;
+
+    let requests = responses_log.requests();
+    assert_eq!(requests.len(), 3);
+    assert!(requests[2].body_contains_text("Continue the previous Codex session"));
+    assert!(requests[2].body_contains_text("first request"));
+    assert!(requests[2].body_contains_text("FIRST_REPLY"));
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn thread_compact_start_rejects_invalid_thread_id() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
@@ -322,6 +393,18 @@ async fn thread_compact_start_rejects_unknown_thread_id() -> Result<()> {
     Ok(())
 }
 
+fn append_auto_new_session_after_compactions(codex_home: &Path, threshold: u32) -> Result<()> {
+    let config_path = codex_home.join("config.toml");
+    let config = std::fs::read_to_string(&config_path)?;
+    let updated = config.replacen(
+        "\n[features]",
+        &format!("\nauto_new_session_after_compactions = {threshold}\n\n[features]"),
+        1,
+    );
+    std::fs::write(config_path, updated)?;
+    Ok(())
+}
+
 async fn start_thread(mcp: &mut McpProcess) -> Result<String> {
     let thread_id = mcp
         .send_thread_start_request(ThreadStartParams {
@@ -372,6 +455,23 @@ async fn wait_for_turn_completed(mcp: &mut McpProcess, turn_id: &str) -> Result<
             return Ok(());
         }
     }
+}
+
+async fn wait_for_thread_auto_handoff(
+    mcp: &mut McpProcess,
+) -> Result<ThreadAutoHandoffNotification> {
+    let notification: JSONRPCNotification = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("thread/autoHandoff"),
+    )
+    .await??;
+    let handoff: ThreadAutoHandoffNotification = serde_json::from_value(
+        notification
+            .params
+            .clone()
+            .expect("thread/autoHandoff params"),
+    )?;
+    Ok(handoff)
 }
 
 async fn wait_for_context_compaction_started(

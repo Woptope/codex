@@ -76,6 +76,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 mod analytics_utils;
 mod app_server_tracing;
 mod attestation;
+mod auto_handoff;
 mod bespoke_event_handling;
 mod command_exec;
 mod config;

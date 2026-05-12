@@ -3452,6 +3452,37 @@
       ],
       "type": "object"
     },
+    "ThreadAutoHandoffNotification": {
+      "properties": {
+        "compactionCount": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "previousThreadId": {
+          "type": "string"
+        },
+        "thread": {
+          "$ref": "#/definitions/Thread"
+        },
+        "threshold": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "compactionCount",
+        "previousThreadId",
+        "thread",
+        "threshold",
+        "turnId"
+      ],
+      "type": "object"
+    },
     "ThreadClosedNotification": {
       "properties": {
         "threadId": {
@@ -5295,6 +5326,26 @@
         "params"
       ],
       "title": "Thread/startedNotification",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "method": {
+          "enum": [
+            "thread/autoHandoff"
+          ],
+          "title": "Thread/autoHandoffNotificationMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadAutoHandoffNotification"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ],
+      "title": "Thread/autoHandoffNotification",
       "type": "object"
     },
     {

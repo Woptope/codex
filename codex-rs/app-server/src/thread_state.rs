@@ -1,3 +1,6 @@
+use crate::auto_handoff::AutoHandoffMetadata;
+use crate::auto_handoff::AutoHandoffRequest;
+use crate::auto_handoff::AutoHandoffState;
 use crate::outgoing_message::ConnectionId;
 use crate::outgoing_message::ConnectionRequestId;
 use codex_app_server_protocol::RequestId;
@@ -80,6 +83,7 @@ pub(crate) struct ThreadState {
     last_thread_settings: Option<ThreadSettings>,
     listener_command_tx: Option<mpsc::UnboundedSender<ThreadListenerCommand>>,
     current_turn_history: ThreadHistoryBuilder,
+    auto_handoff: AutoHandoffState,
     listener_thread: Option<Weak<CodexThread>>,
     watch_registration: WatchRegistration,
 }
@@ -152,6 +156,15 @@ impl ThreadState {
         let changed = self.last_thread_settings.as_ref() != Some(&thread_settings);
         self.last_thread_settings = Some(thread_settings);
         changed
+    }
+
+    pub(crate) fn record_auto_handoff_event(
+        &mut self,
+        event: &EventMsg,
+        threshold: Option<u32>,
+        metadata: AutoHandoffMetadata<'_>,
+    ) -> Option<AutoHandoffRequest> {
+        self.auto_handoff.record_event(event, threshold, metadata)
     }
 }
 
@@ -272,6 +285,7 @@ struct ThreadStateManagerInner {
     live_connections: HashMap<ConnectionId, ConnectionCapabilities>,
     threads: HashMap<ThreadId, ThreadEntry>,
     thread_ids_by_connection: HashMap<ConnectionId, HashSet<ThreadId>>,
+    auto_handoff_requested_threads: HashSet<ThreadId>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -477,6 +491,14 @@ impl ThreadStateManager {
         thread_entry.connection_ids.insert(connection_id);
         thread_entry.update_has_connections();
         true
+    }
+
+    pub(crate) async fn try_mark_auto_handoff_requested(&self, thread_id: ThreadId) -> bool {
+        self.state
+            .lock()
+            .await
+            .auto_handoff_requested_threads
+            .insert(thread_id)
     }
 
     pub(crate) async fn remove_connection(&self, connection_id: ConnectionId) -> Vec<ThreadId> {

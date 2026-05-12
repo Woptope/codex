@@ -1,4 +1,7 @@
+use super::thread_processor::build_thread_from_snapshot;
 use super::*;
+use crate::auto_handoff::AutoHandoffMetadata;
+use crate::auto_handoff::AutoHandoffRequest;
 
 pub(super) const THREAD_UNLOADING_DELAY: Duration = Duration::from_secs(30 * 60);
 
@@ -228,6 +231,10 @@ pub(super) async fn ensure_listener_task_running(
         )));
     };
     let config = conversation.config().await;
+    let auto_handoff_threshold = config.auto_new_session_after_compactions;
+    let auto_handoff_cwd = config.cwd.clone();
+    let auto_handoff_thread_name = conversation.session_configured().thread_name;
+    let auto_handoff_rollout_path = conversation.rollout_path();
     let environments = conversation.environment_selections().await;
     let watch_registration = listener_task_context
         .skills_watcher
@@ -251,6 +258,7 @@ pub(super) async fn ensure_listener_task_running(
             thread_settings_baseline,
         )
     };
+    let listener_task_context_for_handoff = listener_task_context.clone();
     let ListenerTaskContext {
         outgoing,
         thread_manager,
@@ -300,17 +308,28 @@ pub(super) async fn ensure_listener_task_running(
                     // Track the event before emitting any typed translations
                     // so thread-local state such as raw event opt-in stays
                     // synchronized with the conversation.
-                    let raw_events_enabled = {
+                    let (raw_events_enabled, auto_handoff_request) = {
                         let mut thread_state = thread_state.lock().await;
                         thread_state.track_current_turn_event(&event.id, &event.msg);
-                        thread_state.experimental_raw_events
+                        let metadata = AutoHandoffMetadata {
+                            thread_id: conversation_id,
+                            thread_name: auto_handoff_thread_name.as_deref(),
+                            cwd: Some(auto_handoff_cwd.as_path()),
+                            rollout_path: auto_handoff_rollout_path.as_deref(),
+                        };
+                        let auto_handoff_request = thread_state.record_auto_handoff_event(
+                            &event.msg,
+                            auto_handoff_threshold,
+                            metadata,
+                        );
+                        (thread_state.experimental_raw_events, auto_handoff_request)
                     };
                     let subscribed_connection_ids = thread_state_manager
                         .subscribed_connection_ids(conversation_id)
                         .await;
                     let thread_outgoing = ThreadScopedOutgoingMessageSender::new(
                         outgoing_for_task.clone(),
-                        subscribed_connection_ids,
+                        subscribed_connection_ids.clone(),
                         conversation_id,
                     );
 
@@ -339,6 +358,17 @@ pub(super) async fn ensure_listener_task_running(
                         fallback_model_provider.clone(),
                     )
                     .await;
+
+                    if let Some(auto_handoff_request) = auto_handoff_request {
+                        spawn_auto_handoff_thread(
+                            listener_task_context_for_handoff.clone(),
+                            conversation_id,
+                            conversation.clone(),
+                            subscribed_connection_ids,
+                            raw_events_enabled,
+                            auto_handoff_request,
+                        );
+                    }
                 }
                 unloading_watchers_open = unloading_state.wait_for_unloading_trigger() => {
                     if !unloading_watchers_open {
@@ -442,6 +472,171 @@ pub(super) async fn unload_thread_without_subscribers(
             }
         }
     });
+}
+
+fn spawn_auto_handoff_thread(
+    listener_task_context: ListenerTaskContext,
+    source_thread_id: ThreadId,
+    source_thread: Arc<CodexThread>,
+    subscribed_connection_ids: Vec<ConnectionId>,
+    raw_events_enabled: bool,
+    auto_handoff_request: AutoHandoffRequest,
+) {
+    tokio::spawn(async move {
+        start_auto_handoff_thread(
+            listener_task_context,
+            source_thread_id,
+            source_thread,
+            subscribed_connection_ids,
+            raw_events_enabled,
+            auto_handoff_request,
+        )
+        .await;
+    });
+}
+
+async fn start_auto_handoff_thread(
+    listener_task_context: ListenerTaskContext,
+    source_thread_id: ThreadId,
+    source_thread: Arc<CodexThread>,
+    subscribed_connection_ids: Vec<ConnectionId>,
+    raw_events_enabled: bool,
+    auto_handoff_request: AutoHandoffRequest,
+) {
+    if !listener_task_context
+        .thread_state_manager
+        .try_mark_auto_handoff_requested(source_thread_id)
+        .await
+    {
+        return;
+    }
+
+    let source_config = source_thread.config().await.as_ref().clone();
+    let source_config_snapshot = source_thread.config_snapshot().await;
+    let dynamic_tools = source_thread.dynamic_tools().await;
+    let environments = source_thread.environment_selections().await;
+
+    let NewThread {
+        thread_id: replacement_thread_id,
+        thread: replacement_thread,
+        session_configured,
+    } = match listener_task_context
+        .thread_manager
+        .start_thread_with_options(StartThreadOptions {
+            config: source_config,
+            initial_history: InitialHistory::New,
+            session_source: Some(source_config_snapshot.session_source),
+            thread_source: source_config_snapshot.thread_source,
+            dynamic_tools,
+            persist_extended_history: false,
+            metrics_service_name: None,
+            parent_trace: None,
+            environments,
+        })
+        .await
+    {
+        Ok(thread) => thread,
+        Err(err) => {
+            warn!("failed to start auto-handoff thread for {source_thread_id}: {err}");
+            return;
+        }
+    };
+
+    let mut attached_connections = Vec::new();
+    for connection_id in subscribed_connection_ids {
+        if listener_task_context
+            .thread_state_manager
+            .try_ensure_connection_subscribed(
+                replacement_thread_id,
+                connection_id,
+                raw_events_enabled,
+            )
+            .await
+            .is_some()
+        {
+            attached_connections.push(connection_id);
+        }
+    }
+
+    if !attached_connections.is_empty() {
+        let replacement_thread_state = listener_task_context
+            .thread_state_manager
+            .thread_state(replacement_thread_id)
+            .await;
+        if let Err(err) = ensure_listener_task_running(
+            listener_task_context.clone(),
+            replacement_thread_id,
+            replacement_thread.clone(),
+            replacement_thread_state,
+        )
+        .await
+        {
+            warn!(
+                "failed to attach listener for auto-handoff thread {replacement_thread_id}: {message}",
+                message = err.message
+            );
+        }
+    }
+
+    let replacement_config_snapshot = replacement_thread.config_snapshot().await;
+    let mut replacement_summary = build_thread_from_snapshot(
+        replacement_thread_id,
+        session_configured.session_id.to_string(),
+        &replacement_config_snapshot,
+        session_configured.rollout_path.clone(),
+    );
+    listener_task_context
+        .thread_watch_manager
+        .upsert_thread_silently(replacement_summary.clone())
+        .await;
+    replacement_summary.status = resolve_thread_status(
+        listener_task_context
+            .thread_watch_manager
+            .loaded_status_for_thread(&replacement_summary.id)
+            .await,
+        /*has_in_progress_turn*/ false,
+    );
+
+    listener_task_context
+        .outgoing
+        .send_server_notification(ServerNotification::ThreadStarted(
+            thread_started_notification(replacement_summary.clone()),
+        ))
+        .await;
+
+    let turn_id = match replacement_thread
+        .submit(Op::UserInput {
+            items: vec![CoreInputItem::Text {
+                text: auto_handoff_request.prompt,
+                text_elements: Vec::new(),
+            }],
+            environments: None,
+            final_output_json_schema: None,
+            responsesapi_client_metadata: None,
+        })
+        .await
+    {
+        Ok(turn_id) => turn_id,
+        Err(err) => {
+            warn!(
+                "failed to seed auto-handoff thread {replacement_thread_id} from {source_thread_id}: {err}"
+            );
+            return;
+        }
+    };
+
+    listener_task_context
+        .outgoing
+        .send_server_notification(ServerNotification::ThreadAutoHandoff(
+            ThreadAutoHandoffNotification {
+                previous_thread_id: source_thread_id.to_string(),
+                thread: replacement_summary,
+                turn_id,
+                compaction_count: auto_handoff_request.compaction_count,
+                threshold: auto_handoff_request.threshold,
+            },
+        ))
+        .await;
 }
 
 #[allow(clippy::too_many_arguments)]
