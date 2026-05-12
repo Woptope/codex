@@ -319,9 +319,11 @@ use crate::status_indicator_widget::STATUS_DETAILS_DEFAULT_MAX_LINES;
 use crate::status_indicator_widget::StatusDetailsCapitalization;
 use crate::text_formatting::truncate_text;
 use crate::tui::FrameRequester;
+mod auto_handoff;
 mod command_lifecycle;
 mod connectors;
 mod constructor;
+use self::auto_handoff::AutoHandoffState;
 use self::connectors::ConnectorsState;
 mod exec_state;
 use self::exec_state::RunningCommand;
@@ -518,6 +520,8 @@ pub(crate) struct ChatWidget {
     codex_op_target: CodexOpTarget,
     bottom_pane: BottomPane,
     transcript: TranscriptState,
+    auto_handoff: AutoHandoffState,
+    pending_auto_handoff_prompt: Option<String>,
     config: Config,
     raw_output_mode: bool,
     /// Runtime value resolved by core. `config.service_tier` remains the explicit user choice.
@@ -921,6 +925,7 @@ impl ChatWidget {
     /// Record or update the raw markdown for the current agent turn.
     fn record_agent_markdown(&mut self, message: &str) {
         if !message.is_empty() {
+            self.record_auto_handoff_assistant_message(message);
             self.transcript.record_agent_markdown(message.to_string());
         }
     }
@@ -1249,6 +1254,7 @@ impl ChatWidget {
             || !display.local_images.is_empty()
             || !display.remote_image_urls.is_empty()
         {
+            self.record_auto_handoff_user_message(&display.message);
             self.record_visible_user_turn_for_copy();
             self.add_to_history(history_cell::new_user_prompt(
                 display.message,

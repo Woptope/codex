@@ -161,6 +161,11 @@ pub struct ConfigToml {
     /// only to tokens after the carried prefix in the current compaction window.
     pub model_auto_compact_token_limit_scope: Option<AutoCompactTokenLimitScope>,
 
+    /// Number of context compactions after which the TUI should start a fresh
+    /// session with a generated handoff prompt. Unset or zero disables this
+    /// behavior.
+    pub auto_new_session_after_compactions: Option<u32>,
+
     /// Default approval policy for executing commands.
     pub approval_policy: Option<AskForApproval>,
 
@@ -572,6 +577,7 @@ impl From<ConfigToml> for UserSavedConfig {
             model_reasoning_effort: config_toml.model_reasoning_effort,
             model_reasoning_summary: config_toml.model_reasoning_summary,
             model_verbosity: config_toml.model_verbosity,
+            auto_new_session_after_compactions: config_toml.auto_new_session_after_compactions,
             tools: config_toml.tools.map(From::from),
             profile: config_toml.profile,
             profiles,

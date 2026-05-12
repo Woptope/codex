@@ -150,6 +150,7 @@ pub struct ProfileV2 {
     pub model_reasoning_effort: Option<ReasoningEffort>,
     pub model_reasoning_summary: Option<ReasoningSummary>,
     pub model_verbosity: Option<Verbosity>,
+    pub auto_new_session_after_compactions: Option<u32>,
     pub web_search: Option<WebSearchMode>,
     pub tools: Option<ToolsV2>,
     pub chatgpt_base_url: Option<String>,
@@ -253,6 +254,7 @@ pub struct Config {
     pub model_context_window: Option<i64>,
     pub model_auto_compact_token_limit: Option<i64>,
     pub model_auto_compact_token_limit_scope: Option<AutoCompactTokenLimitScope>,
+    pub auto_new_session_after_compactions: Option<u32>,
     pub model_provider: Option<String>,
     #[experimental(nested)]
     pub approval_policy: Option<AskForApproval>,

@@ -186,6 +186,11 @@ pub(crate) enum AppEvent {
         result: Result<AppServerStartedThread, String>,
     },
 
+    /// Start a new session and submit a generated handoff prompt.
+    NewSessionWithInitialPrompt {
+        text: String,
+    },
+
     /// Clear the terminal UI (screen + scrollback), start a fresh session, and keep the
     /// previous chat resumable.
     ClearUi,

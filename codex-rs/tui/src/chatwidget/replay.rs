@@ -167,6 +167,7 @@ impl ChatWidget {
             }
             ThreadItem::ContextCompaction { .. } => {
                 self.add_info_message("Context compacted".to_string(), /*hint*/ None);
+                self.maybe_prepare_auto_handoff_after_compaction(from_replay);
             }
             ThreadItem::HookPrompt { .. } => {}
             ThreadItem::CollabAgentToolCall {

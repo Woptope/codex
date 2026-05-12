@@ -59,6 +59,10 @@ pub struct ConfigProfile {
     pub tools: Option<ToolsToml>,
     pub web_search: Option<WebSearchMode>,
     pub analytics: Option<AnalyticsConfigToml>,
+    /// Number of context compactions after which the TUI should start a fresh
+    /// session with a generated handoff prompt. Unset or zero disables this
+    /// behavior.
+    pub auto_new_session_after_compactions: Option<u32>,
     /// TUI settings scoped to this profile.
     #[serde(default)]
     pub tui: Option<ProfileTui>,
@@ -91,6 +95,7 @@ impl From<ConfigProfile> for codex_app_server_protocol::Profile {
             model_reasoning_effort: config_profile.model_reasoning_effort,
             model_reasoning_summary: config_profile.model_reasoning_summary,
             model_verbosity: config_profile.model_verbosity,
+            auto_new_session_after_compactions: config_profile.auto_new_session_after_compactions,
             chatgpt_base_url: config_profile.chatgpt_base_url,
         }
     }

@@ -360,6 +360,12 @@
         "approvals_reviewer": {
           "$ref": "#/definitions/ApprovalsReviewer"
         },
+        "auto_new_session_after_compactions": {
+          "description": "Number of context compactions after which the TUI should start a fresh session with a generated handoff prompt. Unset or zero disables this behavior.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
         "chatgpt_base_url": {
           "type": "string"
         },
@@ -4198,6 +4204,12 @@
       ],
       "default": null,
       "description": "Machine-local realtime audio device preferences used by realtime voice."
+    },
+    "auto_new_session_after_compactions": {
+      "description": "Number of context compactions after which the TUI should start a fresh session with a generated handoff prompt. Unset or zero disables this behavior.",
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": "integer"
     },
     "auto_review": {
       "allOf": [

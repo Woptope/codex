@@ -570,6 +570,10 @@ pub struct Config {
     /// active context or only tokens after the carried compaction-window prefix.
     pub model_auto_compact_token_limit_scope: AutoCompactTokenLimitScope,
 
+    /// Number of context compactions after which the TUI should start a fresh
+    /// session with a generated handoff prompt. `None` disables this behavior.
+    pub auto_new_session_after_compactions: Option<u32>,
+
     /// Key into the model_providers map that specifies which provider to use.
     pub model_provider_id: String,
 
@@ -3300,6 +3304,10 @@ impl Config {
         )
         .await?;
         let compact_prompt = compact_prompt.or(file_compact_prompt);
+        let auto_new_session_after_compactions = config_profile
+            .auto_new_session_after_compactions
+            .or(cfg.auto_new_session_after_compactions)
+            .filter(|threshold| *threshold > 0);
         let zsh_path = zsh_path_override
             .or(config_profile.zsh_path.map(Into::into))
             .or(cfg.zsh_path.map(Into::into));
@@ -3453,6 +3461,7 @@ impl Config {
             model_auto_compact_token_limit_scope: cfg
                 .model_auto_compact_token_limit_scope
                 .unwrap_or_default(),
+            auto_new_session_after_compactions,
             model_provider_id,
             model_provider,
             cwd: resolved_cwd,

@@ -27,6 +27,19 @@ impl App {
                 self.handle_startup_thread_started(app_server, result)
                     .await?;
             }
+            AppEvent::NewSessionWithInitialPrompt { text } => {
+                self.start_fresh_session_with_summary_hint(
+                    tui,
+                    app_server,
+                    /*session_start_source*/ None,
+                    crate::chatwidget::create_initial_user_message(
+                        Some(text),
+                        Vec::new(),
+                        Vec::new(),
+                    ),
+                )
+                .await;
+            }
             AppEvent::ClearUi => {
                 self.clear_terminal_ui(tui, /*redraw_header*/ false)?;
                 self.reset_app_ui_state_after_clear();

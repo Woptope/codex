@@ -7807,6 +7807,74 @@ async fn load_config_resolves_agent_interrupt_message() -> std::io::Result<()> {
 }
 
 #[tokio::test]
+async fn load_config_resolves_auto_new_session_after_compactions() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let cfg = ConfigToml {
+        auto_new_session_after_compactions: Some(2),
+        ..Default::default()
+    };
+
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await?;
+
+    assert_eq!(config.auto_new_session_after_compactions, Some(2));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn load_config_profile_overrides_auto_new_session_after_compactions() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let cfg = ConfigToml {
+        auto_new_session_after_compactions: Some(4),
+        profile: Some("handoff".to_string()),
+        profiles: HashMap::from([(
+            "handoff".to_string(),
+            ConfigProfile {
+                auto_new_session_after_compactions: Some(2),
+                ..Default::default()
+            },
+        )]),
+        ..Default::default()
+    };
+
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await?;
+
+    assert_eq!(config.auto_new_session_after_compactions, Some(2));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn load_config_zero_auto_new_session_threshold_disables_setting() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let cfg = ConfigToml {
+        auto_new_session_after_compactions: Some(0),
+        ..Default::default()
+    };
+
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await?;
+
+    assert_eq!(config.auto_new_session_after_compactions, None);
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn load_config_normalizes_agent_role_nickname_candidates() -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
     let cfg = ConfigToml {
@@ -8150,6 +8218,7 @@ async fn test_precedence_fixture_with_o3_profile() -> std::io::Result<()> {
             model_context_window: None,
             model_auto_compact_token_limit: None,
             model_auto_compact_token_limit_scope: AutoCompactTokenLimitScope::Total,
+            auto_new_session_after_compactions: None,
             service_tier: None,
             model_provider_id: "openai".to_string(),
             model_provider: fixture.openai_provider.clone(),
@@ -8629,6 +8698,7 @@ async fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         model_context_window: None,
         model_auto_compact_token_limit: None,
         model_auto_compact_token_limit_scope: AutoCompactTokenLimitScope::Total,
+        auto_new_session_after_compactions: None,
         service_tier: None,
         model_provider_id: "openai-custom".to_string(),
         model_provider: fixture.openai_custom_provider.clone(),
@@ -8797,6 +8867,7 @@ async fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         model_context_window: None,
         model_auto_compact_token_limit: None,
         model_auto_compact_token_limit_scope: AutoCompactTokenLimitScope::Total,
+        auto_new_session_after_compactions: None,
         service_tier: None,
         model_provider_id: "openai".to_string(),
         model_provider: fixture.openai_provider.clone(),
@@ -8950,6 +9021,7 @@ async fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         model_context_window: None,
         model_auto_compact_token_limit: None,
         model_auto_compact_token_limit_scope: AutoCompactTokenLimitScope::Total,
+        auto_new_session_after_compactions: None,
         service_tier: None,
         model_provider_id: "openai".to_string(),
         model_provider: fixture.openai_provider.clone(),

@@ -202,6 +202,9 @@ impl ChatWidget {
         }
 
         self.maybe_show_pending_rate_limit_prompt();
+        if !from_replay && !follow_up_started && !active_goal_continuing {
+            self.dispatch_pending_auto_handoff();
+        }
     }
 
     pub(super) fn maybe_prompt_plan_implementation(&mut self) {
