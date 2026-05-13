@@ -5,6 +5,7 @@ use std::path::Path;
 use codex_protocol::ThreadId;
 use codex_protocol::items::TurnItem;
 use codex_protocol::protocol::EventMsg;
+use codex_protocol::protocol::SessionSource;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct AutoHandoffMetadata<'a> {
@@ -33,6 +34,17 @@ pub(crate) struct AutoHandoffReplacementRequest {
 pub(crate) enum AutoHandoffAction {
     PreparePrompt(AutoHandoffPrepareRequest),
     StartReplacement(AutoHandoffReplacementRequest),
+}
+
+pub(crate) fn auto_handoff_threshold_for_session(
+    threshold: Option<u32>,
+    session_source: &SessionSource,
+) -> Option<u32> {
+    if session_source.is_internal() {
+        return None;
+    }
+
+    threshold
 }
 
 #[derive(Debug, Default)]
@@ -252,6 +264,7 @@ mod tests {
     use codex_protocol::items::ContextCompactionItem;
     use codex_protocol::items::TurnItem;
     use codex_protocol::protocol::ItemCompletedEvent;
+    use codex_protocol::protocol::SubAgentSource;
     use codex_protocol::protocol::TurnCompleteEvent;
     use pretty_assertions::assert_eq;
 
@@ -295,6 +308,26 @@ mod tests {
 
         assert_eq!(state.record_event(&event, None, metadata()), None);
         assert_eq!(state.record_event(&event, Some(0), metadata()), None);
+    }
+
+    #[test]
+    fn threshold_is_enabled_for_subagents() {
+        assert_eq!(
+            auto_handoff_threshold_for_session(Some(2), &SessionSource::Mcp),
+            Some(2)
+        );
+
+        let subagent_source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+            parent_thread_id: ThreadId::new(),
+            depth: 1,
+            agent_path: None,
+            agent_nickname: None,
+            agent_role: None,
+        });
+        assert_eq!(
+            auto_handoff_threshold_for_session(Some(2), &subagent_source),
+            Some(2)
+        );
     }
 
     #[test]

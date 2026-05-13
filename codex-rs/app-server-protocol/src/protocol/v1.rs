@@ -209,6 +209,7 @@ pub struct UserSavedConfig {
     pub model_reasoning_summary: Option<ReasoningSummary>,
     pub model_verbosity: Option<Verbosity>,
     pub auto_new_session_after_compactions: Option<u32>,
+    pub auto_new_session_after_compactions_children_only_with_subagents: Option<bool>,
     pub tools: Option<Tools>,
     pub profile: Option<String>,
     pub profiles: HashMap<String, Profile>,
@@ -224,6 +225,7 @@ pub struct Profile {
     pub model_reasoning_summary: Option<ReasoningSummary>,
     pub model_verbosity: Option<Verbosity>,
     pub auto_new_session_after_compactions: Option<u32>,
+    pub auto_new_session_after_compactions_children_only_with_subagents: Option<bool>,
     pub chatgpt_base_url: Option<String>,
 }
 

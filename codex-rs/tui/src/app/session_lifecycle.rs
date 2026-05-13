@@ -351,10 +351,12 @@ impl App {
         self.active_thread_id = Some(thread_id);
         self.active_thread_rx = Some(receiver);
 
+        // Auto handoff starts a fresh root session; keep delegated/side threads
+        // attached to their existing parent lifecycle.
+        let mut config = self.config.clone();
+        config.auto_new_session_after_compactions = None;
         let init = self.chatwidget_init_for_forked_or_resumed_thread(
-            tui,
-            self.config.clone(),
-            /*initial_user_message*/ None,
+            tui, config, /*initial_user_message*/ None,
         );
         self.replace_chat_widget(ChatWidget::new_with_app_event(init));
 

@@ -574,6 +574,10 @@ pub struct Config {
     /// session with a generated handoff prompt. `None` disables this behavior.
     pub auto_new_session_after_compactions: Option<u32>,
 
+    /// When auto handoff is enabled and a root session has live subagents,
+    /// suppress resetting the parent so only child sessions reset.
+    pub auto_new_session_after_compactions_children_only_with_subagents: bool,
+
     /// Key into the model_providers map that specifies which provider to use.
     pub model_provider_id: String,
 
@@ -3308,6 +3312,10 @@ impl Config {
             .auto_new_session_after_compactions
             .or(cfg.auto_new_session_after_compactions)
             .filter(|threshold| *threshold > 0);
+        let auto_new_session_after_compactions_children_only_with_subagents = config_profile
+            .auto_new_session_after_compactions_children_only_with_subagents
+            .or(cfg.auto_new_session_after_compactions_children_only_with_subagents)
+            .unwrap_or(false);
         let zsh_path = zsh_path_override
             .or(config_profile.zsh_path.map(Into::into))
             .or(cfg.zsh_path.map(Into::into));
@@ -3462,6 +3470,7 @@ impl Config {
                 .model_auto_compact_token_limit_scope
                 .unwrap_or_default(),
             auto_new_session_after_compactions,
+            auto_new_session_after_compactions_children_only_with_subagents,
             model_provider_id,
             model_provider,
             cwd: resolved_cwd,

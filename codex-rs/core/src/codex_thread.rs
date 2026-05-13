@@ -1,4 +1,5 @@
 use crate::agent::AgentStatus;
+use crate::agent::control::SpawnAgentOptions;
 use crate::config::ConstraintResult;
 use crate::goals::ExternalGoalSet;
 use crate::goals::GoalRuntimeEvent;
@@ -27,6 +28,7 @@ use codex_protocol::protocol::Op;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::SessionConfiguredEvent;
 use codex_protocol::protocol::SessionSource;
+use codex_protocol::protocol::SubAgentSource;
 use codex_protocol::protocol::Submission;
 use codex_protocol::protocol::ThreadMemoryMode;
 use codex_protocol::protocol::ThreadSource;
@@ -515,6 +517,47 @@ impl CodexThread {
 
     pub async fn dynamic_tools(&self) -> Vec<codex_protocol::dynamic_tools::DynamicToolSpec> {
         self.codex.thread_dynamic_tools().await
+    }
+
+    pub async fn start_auto_handoff_subagent_replacement(
+        &self,
+        prompt: String,
+    ) -> CodexResult<(crate::thread_manager::NewThread, String)> {
+        let source_thread_id = self.session_configured.thread_id;
+        let source_config_snapshot = self.config_snapshot().await;
+        if !matches!(
+            source_config_snapshot.session_source,
+            SessionSource::SubAgent(SubAgentSource::ThreadSpawn { .. })
+        ) {
+            return Err(CodexErr::UnsupportedOperation(
+                "auto-handoff subagent replacement requires a thread-spawn subagent".to_string(),
+            ));
+        }
+
+        let config = self.config().await.as_ref().clone();
+        let environments = self.environment_selections().await;
+        let agent_control = self.codex.session.services.agent_control.clone();
+        agent_control.shutdown_live_agent(source_thread_id).await?;
+        let spawned = agent_control
+            .spawn_agent_thread_with_metadata(
+                config,
+                Op::UserInput {
+                    items: vec![UserInput::Text {
+                        text: prompt,
+                        text_elements: Vec::new(),
+                    }],
+                    environments: None,
+                    final_output_json_schema: None,
+                    responsesapi_client_metadata: None,
+                },
+                Some(source_config_snapshot.session_source),
+                SpawnAgentOptions {
+                    environments: Some(environments),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        Ok((spawned.thread, spawned.initial_turn_id))
     }
 
     pub async fn read_mcp_resource(

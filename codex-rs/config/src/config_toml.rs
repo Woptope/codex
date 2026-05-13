@@ -165,6 +165,9 @@ pub struct ConfigToml {
     /// session with a generated handoff prompt. Unset or zero disables this
     /// behavior.
     pub auto_new_session_after_compactions: Option<u32>,
+    /// When auto handoff is enabled and a root session has live subagents,
+    /// suppress resetting the parent so only child sessions reset.
+    pub auto_new_session_after_compactions_children_only_with_subagents: Option<bool>,
 
     /// Default approval policy for executing commands.
     pub approval_policy: Option<AskForApproval>,
@@ -578,6 +581,8 @@ impl From<ConfigToml> for UserSavedConfig {
             model_reasoning_summary: config_toml.model_reasoning_summary,
             model_verbosity: config_toml.model_verbosity,
             auto_new_session_after_compactions: config_toml.auto_new_session_after_compactions,
+            auto_new_session_after_compactions_children_only_with_subagents: config_toml
+                .auto_new_session_after_compactions_children_only_with_subagents,
             tools: config_toml.tools.map(From::from),
             profile: config_toml.profile,
             profiles,

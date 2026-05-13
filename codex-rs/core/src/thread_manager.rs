@@ -543,6 +543,18 @@ impl ThreadManager {
         Ok(subtree_thread_ids)
     }
 
+    pub async fn has_live_agent_descendants(&self, thread_id: ThreadId) -> CodexResult<bool> {
+        let thread = self.state.get_thread(thread_id).await?;
+        let live_subtree_thread_ids = thread
+            .codex
+            .session
+            .services
+            .agent_control
+            .list_live_agent_subtree_thread_ids(thread_id)
+            .await?;
+        Ok(live_subtree_thread_ids.len() > 1)
+    }
+
     pub async fn start_thread(&self, config: Config) -> CodexResult<NewThread> {
         // Box delegated thread-spawn futures so these convenience wrappers do
         // not inline the full spawn path into every caller's async state.

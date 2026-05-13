@@ -63,6 +63,9 @@ pub struct ConfigProfile {
     /// session with a generated handoff prompt. Unset or zero disables this
     /// behavior.
     pub auto_new_session_after_compactions: Option<u32>,
+    /// When auto handoff is enabled and a root session has live subagents,
+    /// suppress resetting the parent so only child sessions reset.
+    pub auto_new_session_after_compactions_children_only_with_subagents: Option<bool>,
     /// TUI settings scoped to this profile.
     #[serde(default)]
     pub tui: Option<ProfileTui>,
@@ -96,6 +99,8 @@ impl From<ConfigProfile> for codex_app_server_protocol::Profile {
             model_reasoning_summary: config_profile.model_reasoning_summary,
             model_verbosity: config_profile.model_verbosity,
             auto_new_session_after_compactions: config_profile.auto_new_session_after_compactions,
+            auto_new_session_after_compactions_children_only_with_subagents: config_profile
+                .auto_new_session_after_compactions_children_only_with_subagents,
             chatgpt_base_url: config_profile.chatgpt_base_url,
         }
     }

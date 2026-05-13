@@ -3627,6 +3627,12 @@
             "null"
           ]
         },
+        "auto_new_session_after_compactions_children_only_with_subagents": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "compact_prompt": {
           "type": [
             "string",
@@ -9739,6 +9745,12 @@
           "minimum": 0.0,
           "type": [
             "integer",
+            "null"
+          ]
+        },
+        "auto_new_session_after_compactions_children_only_with_subagents": {
+          "type": [
+            "boolean",
             "null"
           ]
         },

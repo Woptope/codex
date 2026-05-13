@@ -7875,6 +7875,26 @@ async fn load_config_zero_auto_new_session_threshold_disables_setting() -> std::
 }
 
 #[tokio::test]
+async fn load_config_resolves_auto_handoff_children_only_with_subagents() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let cfg = ConfigToml {
+        auto_new_session_after_compactions_children_only_with_subagents: Some(true),
+        ..Default::default()
+    };
+
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await?;
+
+    assert!(config.auto_new_session_after_compactions_children_only_with_subagents);
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn load_config_normalizes_agent_role_nickname_candidates() -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
     let cfg = ConfigToml {
@@ -8219,6 +8239,7 @@ async fn test_precedence_fixture_with_o3_profile() -> std::io::Result<()> {
             model_auto_compact_token_limit: None,
             model_auto_compact_token_limit_scope: AutoCompactTokenLimitScope::Total,
             auto_new_session_after_compactions: None,
+            auto_new_session_after_compactions_children_only_with_subagents: false,
             service_tier: None,
             model_provider_id: "openai".to_string(),
             model_provider: fixture.openai_provider.clone(),
@@ -8699,6 +8720,7 @@ async fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         model_auto_compact_token_limit: None,
         model_auto_compact_token_limit_scope: AutoCompactTokenLimitScope::Total,
         auto_new_session_after_compactions: None,
+        auto_new_session_after_compactions_children_only_with_subagents: false,
         service_tier: None,
         model_provider_id: "openai-custom".to_string(),
         model_provider: fixture.openai_custom_provider.clone(),
@@ -8868,6 +8890,7 @@ async fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         model_auto_compact_token_limit: None,
         model_auto_compact_token_limit_scope: AutoCompactTokenLimitScope::Total,
         auto_new_session_after_compactions: None,
+        auto_new_session_after_compactions_children_only_with_subagents: false,
         service_tier: None,
         model_provider_id: "openai".to_string(),
         model_provider: fixture.openai_provider.clone(),
@@ -9022,6 +9045,7 @@ async fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         model_auto_compact_token_limit: None,
         model_auto_compact_token_limit_scope: AutoCompactTokenLimitScope::Total,
         auto_new_session_after_compactions: None,
+        auto_new_session_after_compactions_children_only_with_subagents: false,
         service_tier: None,
         model_provider_id: "openai".to_string(),
         model_provider: fixture.openai_provider.clone(),

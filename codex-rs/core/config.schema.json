@@ -366,6 +366,10 @@
           "minimum": 0.0,
           "type": "integer"
         },
+        "auto_new_session_after_compactions_children_only_with_subagents": {
+          "description": "When auto handoff is enabled and a root session has live subagents, suppress resetting the parent so only child sessions reset.",
+          "type": "boolean"
+        },
         "chatgpt_base_url": {
           "type": "string"
         },
@@ -4210,6 +4214,10 @@
       "format": "uint32",
       "minimum": 0.0,
       "type": "integer"
+    },
+    "auto_new_session_after_compactions_children_only_with_subagents": {
+      "description": "When auto handoff is enabled and a root session has live subagents, suppress resetting the parent so only child sessions reset.",
+      "type": "boolean"
     },
     "auto_review": {
       "allOf": [

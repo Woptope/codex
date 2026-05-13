@@ -4,6 +4,7 @@ use crate::auto_handoff::AutoHandoffAction;
 use crate::auto_handoff::AutoHandoffMetadata;
 use crate::auto_handoff::AutoHandoffPrepareRequest;
 use crate::auto_handoff::AutoHandoffReplacementRequest;
+use crate::auto_handoff::auto_handoff_threshold_for_session;
 
 pub(super) const THREAD_UNLOADING_DELAY: Duration = Duration::from_secs(30 * 60);
 
@@ -233,7 +234,13 @@ pub(super) async fn ensure_listener_task_running(
         )));
     };
     let config = conversation.config().await;
-    let auto_handoff_threshold = config.auto_new_session_after_compactions;
+    let config_snapshot = conversation.config_snapshot().await;
+    let auto_handoff_threshold = auto_handoff_threshold_for_session(
+        config.auto_new_session_after_compactions,
+        &config_snapshot.session_source,
+    );
+    let auto_handoff_children_only_with_subagents =
+        config.auto_new_session_after_compactions_children_only_with_subagents;
     let auto_handoff_cwd = config.cwd.clone();
     let auto_handoff_thread_name = conversation.session_configured().thread_name;
     let auto_handoff_rollout_path = conversation.rollout_path();
@@ -364,13 +371,27 @@ pub(super) async fn ensure_listener_task_running(
                     if let Some(auto_handoff_action) = auto_handoff_action {
                         match auto_handoff_action {
                             AutoHandoffAction::PreparePrompt(request) => {
-                                submit_auto_handoff_preparation_prompt(
+                                if should_suppress_parent_auto_handoff_for_live_subagents(
+                                    listener_task_context_for_handoff.thread_manager.as_ref(),
                                     conversation_id,
-                                    conversation.clone(),
-                                    thread_state.clone(),
-                                    request,
+                                    conversation.as_ref(),
+                                    auto_handoff_children_only_with_subagents,
                                 )
-                                .await;
+                                .await
+                                {
+                                    thread_state
+                                        .lock()
+                                        .await
+                                        .mark_auto_handoff_preparation_submission_failed();
+                                } else {
+                                    submit_auto_handoff_preparation_prompt(
+                                        conversation_id,
+                                        conversation.clone(),
+                                        thread_state.clone(),
+                                        request,
+                                    )
+                                    .await;
+                                }
                             }
                             AutoHandoffAction::StartReplacement(request) => {
                                 spawn_auto_handoff_thread(
@@ -379,6 +400,7 @@ pub(super) async fn ensure_listener_task_running(
                                     conversation.clone(),
                                     subscribed_connection_ids,
                                     raw_events_enabled,
+                                    auto_handoff_children_only_with_subagents,
                                     request,
                                 );
                             }
@@ -495,6 +517,7 @@ fn spawn_auto_handoff_thread(
     source_thread: Arc<CodexThread>,
     subscribed_connection_ids: Vec<ConnectionId>,
     raw_events_enabled: bool,
+    children_only_with_subagents: bool,
     auto_handoff_request: AutoHandoffReplacementRequest,
 ) {
     tokio::spawn(async move {
@@ -504,6 +527,7 @@ fn spawn_auto_handoff_thread(
             source_thread,
             subscribed_connection_ids,
             raw_events_enabled,
+            children_only_with_subagents,
             auto_handoff_request,
         )
         .await;
@@ -556,8 +580,20 @@ async fn start_auto_handoff_thread(
     source_thread: Arc<CodexThread>,
     subscribed_connection_ids: Vec<ConnectionId>,
     raw_events_enabled: bool,
+    children_only_with_subagents: bool,
     auto_handoff_request: AutoHandoffReplacementRequest,
 ) {
+    if should_suppress_parent_auto_handoff_for_live_subagents(
+        listener_task_context.thread_manager.as_ref(),
+        source_thread_id,
+        source_thread.as_ref(),
+        children_only_with_subagents,
+    )
+    .await
+    {
+        return;
+    }
+
     if !listener_task_context
         .thread_state_manager
         .try_mark_auto_handoff_requested(source_thread_id)
@@ -566,12 +602,55 @@ async fn start_auto_handoff_thread(
         return;
     }
 
+    let source_config_snapshot = source_thread.config_snapshot().await;
+    if matches!(
+        source_config_snapshot.session_source,
+        codex_protocol::protocol::SessionSource::SubAgent(
+            codex_protocol::protocol::SubAgentSource::ThreadSpawn { .. }
+        )
+    ) {
+        let (replacement, turn_id) = match source_thread
+            .start_auto_handoff_subagent_replacement(auto_handoff_request.prompt.clone())
+            .await
+        {
+            Ok(replacement) => replacement,
+            Err(err) => {
+                warn!(
+                    "failed to start auto-handoff subagent replacement for {source_thread_id}: {err}"
+                );
+                return;
+            }
+        };
+        let NewThread {
+            thread_id: replacement_thread_id,
+            thread: replacement_thread,
+            session_configured,
+        } = replacement;
+        let replacement_summary = attach_and_emit_auto_handoff_thread_started(
+            &listener_task_context,
+            replacement_thread_id,
+            replacement_thread,
+            &session_configured,
+            subscribed_connection_ids,
+            raw_events_enabled,
+        )
+        .await;
+        emit_auto_handoff_notification(
+            &listener_task_context,
+            source_thread_id,
+            replacement_summary,
+            turn_id,
+            auto_handoff_request,
+        )
+        .await;
+        return;
+    }
+
     if let Err(err) = source_thread.submit(Op::Interrupt).await {
         warn!("failed to stop source thread {source_thread_id} after auto-handoff: {err}");
     }
 
     let source_config = source_thread.config().await.as_ref().clone();
-    let source_config_snapshot = source_thread.config_snapshot().await;
     let dynamic_tools = source_thread.dynamic_tools().await;
     let environments = source_thread.environment_selections().await;
 
@@ -601,6 +680,86 @@ async fn start_auto_handoff_thread(
         }
     };
 
+    let replacement_summary = attach_and_emit_auto_handoff_thread_started(
+        &listener_task_context,
+        replacement_thread_id,
+        replacement_thread.clone(),
+        &session_configured,
+        subscribed_connection_ids,
+        raw_events_enabled,
+    )
+    .await;
+
+    let turn_id = match replacement_thread
+        .submit(Op::UserInput {
+            items: vec![CoreInputItem::Text {
+                text: auto_handoff_request.prompt.clone(),
+                text_elements: Vec::new(),
+            }],
+            environments: None,
+            final_output_json_schema: None,
+            responsesapi_client_metadata: None,
+        })
+        .await
+    {
+        Ok(turn_id) => turn_id,
+        Err(err) => {
+            warn!(
+                "failed to seed auto-handoff thread {replacement_thread_id} from {source_thread_id}: {err}"
+            );
+            return;
+        }
+    };
+
+    emit_auto_handoff_notification(
+        &listener_task_context,
+        source_thread_id,
+        replacement_summary,
+        turn_id,
+        auto_handoff_request,
+    )
+    .await;
+}
+
+async fn should_suppress_parent_auto_handoff_for_live_subagents(
+    thread_manager: &ThreadManager,
+    source_thread_id: ThreadId,
+    source_thread: &CodexThread,
+    children_only_with_subagents: bool,
+) -> bool {
+    if !children_only_with_subagents {
+        return false;
+    }
+    if source_thread
+        .config_snapshot()
+        .await
+        .session_source
+        .is_non_root_agent()
+    {
+        return false;
+    }
+    match thread_manager
+        .has_live_agent_descendants(source_thread_id)
+        .await
+    {
+        Ok(has_descendants) => has_descendants,
+        Err(err) => {
+            warn!(
+                "failed to inspect live subagents for auto-handoff source {source_thread_id}: {err}"
+            );
+            false
+        }
+    }
+}
+
+async fn attach_and_emit_auto_handoff_thread_started(
+    listener_task_context: &ListenerTaskContext,
+    replacement_thread_id: ThreadId,
+    replacement_thread: Arc<CodexThread>,
+    session_configured: &SessionConfiguredEvent,
+    subscribed_connection_ids: Vec<ConnectionId>,
+    raw_events_enabled: bool,
+) -> Thread {
     let mut attached_connections = Vec::new();
     for connection_id in subscribed_connection_ids {
         if listener_task_context
@@ -663,27 +822,16 @@ async fn start_auto_handoff_thread(
         ))
         .await;
 
-    let turn_id = match replacement_thread
-        .submit(Op::UserInput {
-            items: vec![CoreInputItem::Text {
-                text: auto_handoff_request.prompt,
-                text_elements: Vec::new(),
-            }],
-            environments: None,
-            final_output_json_schema: None,
-            responsesapi_client_metadata: None,
-        })
-        .await
-    {
-        Ok(turn_id) => turn_id,
-        Err(err) => {
-            warn!(
-                "failed to seed auto-handoff thread {replacement_thread_id} from {source_thread_id}: {err}"
-            );
-            return;
-        }
-    };
+    replacement_summary
+}
 
+async fn emit_auto_handoff_notification(
+    listener_task_context: &ListenerTaskContext,
+    source_thread_id: ThreadId,
+    replacement_summary: Thread,
+    turn_id: String,
+    auto_handoff_request: AutoHandoffReplacementRequest,
+) {
     listener_task_context
         .outgoing
         .send_server_notification(ServerNotification::ThreadAutoHandoff(

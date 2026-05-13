@@ -9,6 +9,7 @@ use crate::session::emit_subagent_session_started;
 use crate::session_prefix::format_subagent_context_line;
 use crate::session_prefix::format_subagent_notification_message;
 use crate::shell_snapshot::ShellSnapshot;
+use crate::thread_manager::NewThread;
 use crate::thread_manager::ResumeThreadWithHistoryOptions;
 use crate::thread_manager::ThreadManagerState;
 use crate::thread_rollout_truncation::truncate_rollout_to_last_n_fork_turns;
@@ -60,6 +61,13 @@ pub(crate) struct SpawnAgentOptions {
 #[derive(Clone, Debug)]
 pub(crate) struct LiveAgent {
     pub(crate) thread_id: ThreadId,
+    pub(crate) metadata: AgentMetadata,
+    pub(crate) status: AgentStatus,
+}
+
+pub(crate) struct SpawnedAgentThread {
+    pub(crate) thread: NewThread,
+    pub(crate) initial_turn_id: String,
     pub(crate) metadata: AgentMetadata,
     pub(crate) status: AgentStatus,
 }
@@ -195,7 +203,7 @@ impl AgentControl {
             SpawnAgentOptions::default(),
         ))
         .await?;
-        Ok(spawned_agent.thread_id)
+        Ok(spawned_agent.thread.thread_id)
     }
 
     /// Spawn an agent thread with some metadata.
@@ -206,6 +214,23 @@ impl AgentControl {
         session_source: Option<SessionSource>,
         options: SpawnAgentOptions, // TODO(jif) drop with new fork.
     ) -> CodexResult<LiveAgent> {
+        let spawned =
+            Box::pin(self.spawn_agent_internal(config, initial_operation, session_source, options))
+                .await?;
+        Ok(LiveAgent {
+            thread_id: spawned.thread.thread_id,
+            metadata: spawned.metadata,
+            status: spawned.status,
+        })
+    }
+
+    pub(crate) async fn spawn_agent_thread_with_metadata(
+        &self,
+        config: crate::config::Config,
+        initial_operation: Op,
+        session_source: Option<SessionSource>,
+        options: SpawnAgentOptions,
+    ) -> CodexResult<SpawnedAgentThread> {
         Box::pin(self.spawn_agent_internal(config, initial_operation, session_source, options))
             .await
     }
@@ -216,7 +241,7 @@ impl AgentControl {
         initial_operation: Op,
         session_source: Option<SessionSource>,
         options: SpawnAgentOptions,
-    ) -> CodexResult<LiveAgent> {
+    ) -> CodexResult<SpawnedAgentThread> {
         let state = self.upgrade()?;
         let mut reservation = self.state.reserve_spawn_slot(config.agent_max_threads)?;
         let inherited_shell_snapshot = self
@@ -230,8 +255,8 @@ impl AgentControl {
                 parent_thread_id,
                 depth,
                 agent_path,
+                agent_nickname,
                 agent_role,
-                ..
             })) => {
                 let (session_source, agent_metadata) = self.prepare_thread_spawn(
                     &mut reservation,
@@ -240,7 +265,7 @@ impl AgentControl {
                     depth,
                     agent_path,
                     agent_role,
-                    /*preferred_agent_nickname*/ None,
+                    agent_nickname,
                 )?;
                 (Some(session_source), agent_metadata)
             }
@@ -334,8 +359,10 @@ impl AgentControl {
         )
         .await;
 
-        self.send_input(new_thread.thread_id, initial_operation)
+        let initial_turn_id = self
+            .send_input(new_thread.thread_id, initial_operation)
             .await?;
+        let status = self.get_status(new_thread.thread_id).await;
         if !new_thread.thread.enabled(Feature::MultiAgentV2) {
             let child_reference = agent_metadata
                 .agent_path
@@ -350,10 +377,11 @@ impl AgentControl {
             );
         }
 
-        Ok(LiveAgent {
-            thread_id: new_thread.thread_id,
+        Ok(SpawnedAgentThread {
+            thread: new_thread,
+            initial_turn_id,
             metadata: agent_metadata,
-            status: self.get_status(new_thread.thread_id).await,
+            status,
         })
     }
 
