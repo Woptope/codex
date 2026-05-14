@@ -5,11 +5,35 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct GoalStore {
     pool: Arc<SqlitePool>,
+    threads_pool: Arc<SqlitePool>,
 }
 
 impl GoalStore {
-    pub(crate) fn new(pool: Arc<SqlitePool>) -> Self {
-        Self { pool }
+    pub(crate) fn new(pool: Arc<SqlitePool>, threads_pool: Arc<SqlitePool>) -> Self {
+        Self { pool, threads_pool }
+    }
+
+    async fn set_thread_preview_if_empty(
+        &self,
+        thread_id: ThreadId,
+        preview: &str,
+    ) -> anyhow::Result<bool> {
+        let preview = preview.trim();
+        if preview.is_empty() {
+            return Ok(false);
+        }
+        let result = sqlx::query(
+            r#"
+UPDATE threads
+SET preview = ?
+WHERE id = ? AND preview = ''
+            "#,
+        )
+        .bind(preview)
+        .bind(thread_id.to_string())
+        .execute(self.threads_pool.as_ref())
+        .await?;
+        Ok(result.rows_affected() > 0)
     }
 }
 
@@ -780,6 +804,7 @@ mod tests {
         upsert_test_thread(&runtime, target_thread_id).await;
 
         let source = runtime
+            .thread_goals()
             .replace_thread_goal(
                 source_thread_id,
                 "finish auto handoff",
@@ -788,12 +813,13 @@ mod tests {
             )
             .await
             .expect("goal replacement should succeed");
-        let ThreadGoalAccountingOutcome::Updated(source) = runtime
+        let GoalAccountingOutcome::Updated(source) = runtime
+            .thread_goals()
             .account_thread_goal_usage(
                 source_thread_id,
                 42,
                 123,
-                ThreadGoalAccountingMode::ActiveOnly,
+                GoalAccountingMode::ActiveOnly,
                 Some(source.goal_id.as_str()),
             )
             .await
@@ -803,6 +829,7 @@ mod tests {
         };
 
         let copied = runtime
+            .thread_goals()
             .insert_thread_goal_snapshot(target_thread_id, &source)
             .await
             .expect("goal copy should succeed")
@@ -829,6 +856,7 @@ mod tests {
         upsert_test_thread(&runtime, target_thread_id).await;
 
         let source = runtime
+            .thread_goals()
             .replace_thread_goal(
                 source_thread_id,
                 "paused goal",
@@ -839,6 +867,7 @@ mod tests {
             .expect("goal replacement should succeed");
 
         let copied = runtime
+            .thread_goals()
             .insert_thread_goal_snapshot(target_thread_id, &source)
             .await
             .expect("goal copy should succeed");
@@ -847,6 +876,7 @@ mod tests {
         assert_eq!(
             None,
             runtime
+                .thread_goals()
                 .get_thread_goal(target_thread_id)
                 .await
                 .expect("goal read should succeed")

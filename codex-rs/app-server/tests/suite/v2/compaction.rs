@@ -381,6 +381,7 @@ async fn auto_handoff_after_compaction_preserves_active_goal() -> Result<()> {
         StateRuntime::init(codex_home.path().to_path_buf(), "mock_provider".into()).await?;
     let state_thread_id = ThreadId::from_string(&thread_id)?;
     let goal = state_db
+        .thread_goals()
         .replace_thread_goal(
             state_thread_id,
             "finish auto handoff",
@@ -388,12 +389,13 @@ async fn auto_handoff_after_compaction_preserves_active_goal() -> Result<()> {
             Some(10_000),
         )
         .await?;
-    let codex_state::ThreadGoalAccountingOutcome::Updated(_) = state_db
+    let codex_state::GoalAccountingOutcome::Updated(_) = state_db
+        .thread_goals()
         .account_thread_goal_usage(
             state_thread_id,
             /*time_delta_seconds*/ 12,
             /*token_delta*/ 150,
-            codex_state::ThreadGoalAccountingMode::ActiveOnly,
+            codex_state::GoalAccountingMode::ActiveOnly,
             Some(goal.goal_id.as_str()),
         )
         .await?
@@ -643,12 +645,8 @@ async fn wait_for_thread_auto_handoff(
         mcp.read_stream_until_notification_message("thread/autoHandoff"),
     )
     .await??;
-    let handoff: ThreadAutoHandoffNotification = serde_json::from_value(
-        notification
-            .params
-            .clone()
-            .expect("thread/autoHandoff params"),
-    )?;
+    let handoff: ThreadAutoHandoffNotification =
+        serde_json::from_value(notification.params.expect("thread/autoHandoff params"))?;
     Ok(handoff)
 }
 

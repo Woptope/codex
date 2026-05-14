@@ -2015,6 +2015,7 @@ async fn auto_handoff_children_only_with_subagents_subagent_replacement_preserve
     .expect("child metadata should be persisted");
 
     let goal = state_db
+        .thread_goals()
         .replace_thread_goal(
             child_thread_id,
             "finish the delegated investigation",
@@ -2023,12 +2024,13 @@ async fn auto_handoff_children_only_with_subagents_subagent_replacement_preserve
         )
         .await
         .expect("goal replacement should succeed");
-    let codex_state::ThreadGoalAccountingOutcome::Updated(goal) = state_db
+    let codex_state::GoalAccountingOutcome::Updated(goal) = state_db
+        .thread_goals()
         .account_thread_goal_usage(
             child_thread_id,
             42,
             123,
-            codex_state::ThreadGoalAccountingMode::ActiveOnly,
+            codex_state::GoalAccountingMode::ActiveOnly,
             Some(goal.goal_id.as_str()),
         )
         .await
@@ -2045,6 +2047,7 @@ async fn auto_handoff_children_only_with_subagents_subagent_replacement_preserve
     assert!(!turn_id.is_empty());
 
     let copied_goal = state_db
+        .thread_goals()
         .get_thread_goal(replacement.thread_id)
         .await
         .expect("replacement goal read should succeed")
@@ -2084,6 +2087,7 @@ async fn auto_handoff_children_only_with_subagents_subagent_replacement_preserve
             }],
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
+            thread_settings: Default::default(),
         },
     );
     assert!(

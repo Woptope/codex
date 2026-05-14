@@ -549,6 +549,7 @@ async fn submit_auto_handoff_preparation_prompt(
             environments: None,
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
+            thread_settings: Default::default(),
         })
         .await
     {
@@ -717,6 +718,7 @@ async fn start_auto_handoff_thread(
             environments: None,
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
+            thread_settings: Default::default(),
         })
         .await
     {
@@ -774,11 +776,13 @@ async fn active_goal_snapshot_for_auto_handoff(
     thread_id: ThreadId,
     thread: &CodexThread,
 ) -> Option<codex_state::ThreadGoal> {
-    let Some(state_db) = thread.state_db() else {
-        return None;
-    };
+    let state_db = thread.state_db()?;
 
-    match state_db.get_active_thread_goal(thread_id).await {
+    match state_db
+        .thread_goals()
+        .get_active_thread_goal(thread_id)
+        .await
+    {
         Ok(goal) => goal,
         Err(err) => {
             warn!("failed to read active goal before auto-handoff for {thread_id}: {err}");
@@ -810,6 +814,7 @@ async fn preserve_auto_handoff_goal_snapshot(
     }
 
     match state_db
+        .thread_goals()
         .insert_thread_goal_snapshot(replacement_thread_id, &goal)
         .await
     {

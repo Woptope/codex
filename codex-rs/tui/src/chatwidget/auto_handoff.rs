@@ -7,8 +7,8 @@ use codex_protocol::ThreadId;
 use super::ChatWidget;
 use super::ShellEscapePolicy;
 use super::UserMessage;
-use super::UserMessageHistoryOverride;
 use super::UserMessageHistoryRecord;
+use super::user_messages::UserMessageHistoryOverride;
 use crate::app_event::AppEvent;
 
 #[derive(Clone, Copy, Debug)]

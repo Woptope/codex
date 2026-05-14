@@ -574,7 +574,11 @@ impl CodexThread {
         let config = self.config().await.as_ref().clone();
         let environments = self.environment_selections().await;
         let goal_snapshot_to_preserve = match self.state_db() {
-            Some(state_db) => match state_db.get_active_thread_goal(source_thread_id).await {
+            Some(state_db) => match state_db
+                .thread_goals()
+                .get_active_thread_goal(source_thread_id)
+                .await
+            {
                 Ok(goal) => goal,
                 Err(err) => {
                     tracing::warn!(
@@ -598,6 +602,7 @@ impl CodexThread {
                     environments: None,
                     final_output_json_schema: None,
                     responsesapi_client_metadata: None,
+                    thread_settings: Default::default(),
                 },
                 Some(source_config_snapshot.session_source),
                 SpawnAgentOptions {

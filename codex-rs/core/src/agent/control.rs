@@ -369,6 +369,7 @@ impl AgentControl {
                 {
                     Ok(()) => {
                         if let Err(err) = state_db
+                            .thread_goals()
                             .insert_thread_goal_snapshot(new_thread.thread_id, goal)
                             .await
                         {

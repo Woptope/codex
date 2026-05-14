@@ -224,7 +224,7 @@ impl StateRuntime {
         let thread_updated_at_millis = thread_updated_at_millis_result?;
         let thread_updated_at_millis = thread_updated_at_millis.unwrap_or(0);
         let runtime = Arc::new(Self {
-            thread_goals: GoalStore::new(Arc::clone(&goals_pool)),
+            thread_goals: GoalStore::new(Arc::clone(&goals_pool), Arc::clone(&pool)),
             pool,
             logs_pool,
             codex_home,
