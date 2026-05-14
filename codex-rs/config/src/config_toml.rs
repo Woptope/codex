@@ -161,12 +161,13 @@ pub struct ConfigToml {
     /// only to tokens after the carried prefix in the current compaction window.
     pub model_auto_compact_token_limit_scope: Option<AutoCompactTokenLimitScope>,
 
-    /// Number of context compactions after which the TUI should start a fresh
-    /// session with a generated handoff prompt. Unset or zero disables this
-    /// behavior.
+    /// Number of live context compactions after which the TUI should ask the
+    /// current thread to prepare a handoff prompt and continue in a fresh
+    /// session. Unset or zero disables this behavior.
     pub auto_new_session_after_compactions: Option<u32>,
-    /// When auto handoff is enabled and a root session has live subagents,
-    /// suppress resetting the parent so only child sessions reset.
+    /// When auto handoff is enabled, keep a root session active if it has live
+    /// thread-spawn subagents so only child sessions create replacement
+    /// threads. Root sessions without live subagents still replace normally.
     pub auto_new_session_after_compactions_children_only_with_subagents: Option<bool>,
 
     /// Default approval policy for executing commands.

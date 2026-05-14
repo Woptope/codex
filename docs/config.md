@@ -13,3 +13,9 @@ Admins can set top-level `allow_managed_hooks_only = true` in
 still allowing managed hooks from requirements and managed config layers. This
 setting is only supported in `requirements.toml`; putting it in `config.toml`
 does not enable managed-hooks-only mode.
+
+## Automatic fresh-session handoff
+
+Codex can optionally continue long-running TUI threads in a fresh session after
+repeated context compactions. See [automatic fresh-session handoff](./auto-fresh-session-handoff.md)
+for the local behavior reference and example settings.
