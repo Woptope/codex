@@ -106,11 +106,17 @@ impl ChatWidget {
     pub(super) fn record_auto_handoff_user_message(&mut self, _message: &str) {}
 
     pub(super) fn record_auto_handoff_assistant_message(&mut self, message: &str) {
+        if !self.chat_widget_auto_handoff_enabled() {
+            return;
+        }
         self.auto_handoff.record_assistant_message(message);
     }
 
     pub(super) fn maybe_prepare_auto_handoff_after_compaction(&mut self, from_replay: bool) {
         if from_replay {
+            return;
+        }
+        if !self.chat_widget_auto_handoff_enabled() {
             return;
         }
 
@@ -119,6 +125,9 @@ impl ChatWidget {
     }
 
     pub(super) fn dispatch_pending_auto_handoff(&mut self) {
+        if !self.chat_widget_auto_handoff_enabled() {
+            return;
+        }
         let metadata = AutoHandoffMetadata {
             thread_id: self.thread_id,
             thread_name: self.thread_name.as_deref(),
@@ -147,6 +156,10 @@ impl ChatWidget {
                     .send(AppEvent::NewSessionWithInitialPrompt { text: prompt });
             }
         }
+    }
+
+    fn chat_widget_auto_handoff_enabled(&self) -> bool {
+        matches!(&self.codex_op_target, super::CodexOpTarget::Direct(_))
     }
 }
 

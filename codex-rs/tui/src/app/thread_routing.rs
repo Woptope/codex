@@ -1449,6 +1449,16 @@ impl App {
         ) && self.pending_shutdown_exit_thread_id
             == self.active_thread_id;
 
+        if let ThreadBufferedEvent::Notification(ServerNotification::ThreadAutoHandoff(
+            notification,
+        )) = &event
+            && self
+                .handle_thread_auto_handoff(tui, app_server, notification)
+                .await?
+        {
+            return Ok(());
+        }
+
         // Processing order matters:
         //
         // 1. handle unexpected non-primary shutdown failover first;
@@ -1496,6 +1506,73 @@ impl App {
             tui.frame_requester().schedule_frame();
         }
         Ok(())
+    }
+
+    async fn handle_thread_auto_handoff(
+        &mut self,
+        tui: &mut tui::Tui,
+        app_server: &mut AppServerSession,
+        notification: &codex_app_server_protocol::ThreadAutoHandoffNotification,
+    ) -> Result<bool> {
+        let previous_thread_id = match ThreadId::from_string(&notification.previous_thread_id) {
+            Ok(thread_id) => thread_id,
+            Err(err) => {
+                tracing::warn!(
+                    thread_id = notification.previous_thread_id,
+                    error = %err,
+                    "ignoring auto-handoff notification with invalid previous thread id"
+                );
+                return Ok(true);
+            }
+        };
+        if self.active_thread_id != Some(previous_thread_id) {
+            return Ok(false);
+        }
+
+        let replacement_thread_id = match ThreadId::from_string(&notification.thread.id) {
+            Ok(thread_id) => thread_id,
+            Err(err) => {
+                self.chat_widget.add_error_message(format!(
+                    "Auto handoff started a replacement with an invalid thread id: {err}"
+                ));
+                return Ok(true);
+            }
+        };
+
+        if self.primary_thread_id == Some(previous_thread_id) {
+            match app_server
+                .resume_thread(self.config.clone(), replacement_thread_id)
+                .await
+            {
+                Ok(started) => {
+                    self.replace_chat_widget_with_app_server_thread(
+                        tui, app_server, started, /*initial_user_message*/ None,
+                    )
+                    .await?;
+                    self.chat_widget.add_info_message(
+                        "Started a fresh session after context compaction.".to_string(),
+                        /*hint*/ None,
+                    );
+                }
+                Err(err) => {
+                    self.chat_widget.add_error_message(format!(
+                        "Auto handoff started replacement thread {replacement_thread_id}, but the TUI could not attach to it: {err}"
+                    ));
+                }
+            }
+            return Ok(true);
+        }
+
+        self.mark_agent_picker_thread_closed(previous_thread_id);
+        self.upsert_agent_picker_thread(
+            replacement_thread_id,
+            notification.thread.agent_nickname.clone(),
+            notification.thread.agent_role.clone(),
+            /*is_closed*/ false,
+        );
+        self.select_agent_thread(tui, app_server, replacement_thread_id)
+            .await?;
+        Ok(true)
     }
 }
 

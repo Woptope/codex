@@ -626,6 +626,11 @@ async fn start_auto_handoff_thread(
             thread: replacement_thread,
             session_configured,
         } = replacement;
+        let copied_goal = active_goal_snapshot_for_auto_handoff(
+            replacement_thread_id,
+            replacement_thread.as_ref(),
+        )
+        .await;
         let replacement_summary = attach_and_emit_auto_handoff_thread_started(
             &listener_task_context,
             replacement_thread_id,
@@ -635,6 +640,8 @@ async fn start_auto_handoff_thread(
             raw_events_enabled,
         )
         .await;
+        emit_auto_handoff_goal_snapshot(&listener_task_context, replacement_thread_id, copied_goal)
+            .await;
         emit_auto_handoff_notification(
             &listener_task_context,
             source_thread_id,
@@ -645,6 +652,9 @@ async fn start_auto_handoff_thread(
         .await;
         return;
     }
+
+    let goal_snapshot_to_preserve =
+        active_goal_snapshot_for_auto_handoff(source_thread_id, source_thread.as_ref()).await;
 
     if let Err(err) = source_thread.submit(Op::Interrupt).await {
         warn!("failed to stop source thread {source_thread_id} after auto-handoff: {err}");
@@ -689,6 +699,14 @@ async fn start_auto_handoff_thread(
         raw_events_enabled,
     )
     .await;
+    let copied_goal = preserve_auto_handoff_goal_snapshot(
+        replacement_thread_id,
+        replacement_thread.as_ref(),
+        goal_snapshot_to_preserve,
+    )
+    .await;
+    emit_auto_handoff_goal_snapshot(&listener_task_context, replacement_thread_id, copied_goal)
+        .await;
 
     let turn_id = match replacement_thread
         .submit(Op::UserInput {
@@ -750,6 +768,79 @@ async fn should_suppress_parent_auto_handoff_for_live_subagents(
             false
         }
     }
+}
+
+async fn active_goal_snapshot_for_auto_handoff(
+    thread_id: ThreadId,
+    thread: &CodexThread,
+) -> Option<codex_state::ThreadGoal> {
+    let Some(state_db) = thread.state_db() else {
+        return None;
+    };
+
+    match state_db.get_active_thread_goal(thread_id).await {
+        Ok(goal) => goal,
+        Err(err) => {
+            warn!("failed to read active goal before auto-handoff for {thread_id}: {err}");
+            None
+        }
+    }
+}
+
+async fn preserve_auto_handoff_goal_snapshot(
+    replacement_thread_id: ThreadId,
+    replacement_thread: &CodexThread,
+    goal: Option<codex_state::ThreadGoal>,
+) -> Option<codex_state::ThreadGoal> {
+    let goal = goal?;
+    let Some(state_db) = replacement_thread.state_db() else {
+        warn!(
+            "cannot preserve goal for auto-handoff replacement {replacement_thread_id} without a state db"
+        );
+        return None;
+    };
+    if let Err(err) = replacement_thread
+        .ensure_state_thread_metadata(replacement_thread_id)
+        .await
+    {
+        warn!(
+            "cannot preserve goal for auto-handoff replacement {replacement_thread_id} without persisted thread metadata: {err}"
+        );
+        return None;
+    }
+
+    match state_db
+        .insert_thread_goal_snapshot(replacement_thread_id, &goal)
+        .await
+    {
+        Ok(copied_goal) => copied_goal,
+        Err(err) => {
+            warn!(
+                "failed to preserve goal for auto-handoff replacement {replacement_thread_id}: {err}"
+            );
+            None
+        }
+    }
+}
+
+async fn emit_auto_handoff_goal_snapshot(
+    listener_task_context: &ListenerTaskContext,
+    replacement_thread_id: ThreadId,
+    goal: Option<codex_state::ThreadGoal>,
+) {
+    let Some(goal) = goal else {
+        return;
+    };
+    listener_task_context
+        .outgoing
+        .send_server_notification(ServerNotification::ThreadGoalUpdated(
+            ThreadGoalUpdatedNotification {
+                thread_id: replacement_thread_id.to_string(),
+                turn_id: None,
+                goal: api_thread_goal_from_state(goal),
+            },
+        ))
+        .await;
 }
 
 async fn attach_and_emit_auto_handoff_thread_started(

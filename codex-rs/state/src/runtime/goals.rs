@@ -61,6 +61,75 @@ WHERE thread_id = ?
         row.map(|row| thread_goal_from_row(&row)).transpose()
     }
 
+    pub async fn get_active_thread_goal(
+        &self,
+        thread_id: ThreadId,
+    ) -> anyhow::Result<Option<crate::ThreadGoal>> {
+        Ok(self.get_thread_goal(thread_id).await?.filter(|goal| {
+            matches!(
+                goal.status,
+                crate::ThreadGoalStatus::Active | crate::ThreadGoalStatus::BudgetLimited
+            )
+        }))
+    }
+
+    pub async fn insert_thread_goal_snapshot(
+        &self,
+        thread_id: ThreadId,
+        goal: &crate::ThreadGoal,
+    ) -> anyhow::Result<Option<crate::ThreadGoal>> {
+        if !matches!(
+            goal.status,
+            crate::ThreadGoalStatus::Active | crate::ThreadGoalStatus::BudgetLimited
+        ) {
+            return Ok(None);
+        }
+
+        let row = sqlx::query(
+            r#"
+INSERT INTO thread_goals (
+    thread_id,
+    goal_id,
+    objective,
+    status,
+    token_budget,
+    tokens_used,
+    time_used_seconds,
+    created_at_ms,
+    updated_at_ms
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(thread_id) DO NOTHING
+RETURNING
+    thread_id,
+    goal_id,
+    objective,
+    status,
+    token_budget,
+    tokens_used,
+    time_used_seconds,
+    created_at_ms,
+    updated_at_ms
+            "#,
+        )
+        .bind(thread_id.to_string())
+        .bind(goal.goal_id.as_str())
+        .bind(goal.objective.as_str())
+        .bind(goal.status.as_str())
+        .bind(goal.token_budget)
+        .bind(goal.tokens_used)
+        .bind(goal.time_used_seconds)
+        .bind(datetime_to_epoch_millis(goal.created_at))
+        .bind(datetime_to_epoch_millis(goal.updated_at))
+        .fetch_optional(self.pool.as_ref())
+        .await?;
+
+        if row.is_some() {
+            self.set_thread_preview_if_empty(thread_id, &goal.objective)
+                .await?;
+        }
+        row.map(|row| thread_goal_from_row(&row)).transpose()
+    }
+
     pub async fn replace_thread_goal(
         &self,
         thread_id: ThreadId,
@@ -699,6 +768,89 @@ mod tests {
         assert_eq!(Some(0), inserted.token_budget);
         assert_eq!(0, inserted.tokens_used);
         assert_eq!(0, inserted.time_used_seconds);
+    }
+
+    #[tokio::test]
+    async fn insert_thread_goal_snapshot_preserves_active_goal_accounting() {
+        let runtime = test_runtime().await;
+        let source_thread_id = test_thread_id();
+        let target_thread_id =
+            ThreadId::from_string("00000000-0000-0000-0000-000000000124").expect("valid thread id");
+        upsert_test_thread(&runtime, source_thread_id).await;
+        upsert_test_thread(&runtime, target_thread_id).await;
+
+        let source = runtime
+            .replace_thread_goal(
+                source_thread_id,
+                "finish auto handoff",
+                crate::ThreadGoalStatus::Active,
+                Some(1_000),
+            )
+            .await
+            .expect("goal replacement should succeed");
+        let ThreadGoalAccountingOutcome::Updated(source) = runtime
+            .account_thread_goal_usage(
+                source_thread_id,
+                42,
+                123,
+                ThreadGoalAccountingMode::ActiveOnly,
+                Some(source.goal_id.as_str()),
+            )
+            .await
+            .expect("goal accounting should succeed")
+        else {
+            panic!("active goal should account usage");
+        };
+
+        let copied = runtime
+            .insert_thread_goal_snapshot(target_thread_id, &source)
+            .await
+            .expect("goal copy should succeed")
+            .expect("active goal should be copied");
+
+        assert_eq!(target_thread_id, copied.thread_id);
+        assert_eq!(source.goal_id, copied.goal_id);
+        assert_eq!(source.objective, copied.objective);
+        assert_eq!(source.status, copied.status);
+        assert_eq!(source.token_budget, copied.token_budget);
+        assert_eq!(source.tokens_used, copied.tokens_used);
+        assert_eq!(source.time_used_seconds, copied.time_used_seconds);
+        assert_eq!(source.created_at, copied.created_at);
+        assert_eq!(source.updated_at, copied.updated_at);
+    }
+
+    #[tokio::test]
+    async fn insert_thread_goal_snapshot_skips_inactive_goal() {
+        let runtime = test_runtime().await;
+        let source_thread_id = test_thread_id();
+        let target_thread_id =
+            ThreadId::from_string("00000000-0000-0000-0000-000000000125").expect("valid thread id");
+        upsert_test_thread(&runtime, source_thread_id).await;
+        upsert_test_thread(&runtime, target_thread_id).await;
+
+        let source = runtime
+            .replace_thread_goal(
+                source_thread_id,
+                "paused goal",
+                crate::ThreadGoalStatus::Paused,
+                None,
+            )
+            .await
+            .expect("goal replacement should succeed");
+
+        let copied = runtime
+            .insert_thread_goal_snapshot(target_thread_id, &source)
+            .await
+            .expect("goal copy should succeed");
+
+        assert_eq!(None, copied);
+        assert_eq!(
+            None,
+            runtime
+                .get_thread_goal(target_thread_id)
+                .await
+                .expect("goal read should succeed")
+        );
     }
 
     #[tokio::test]

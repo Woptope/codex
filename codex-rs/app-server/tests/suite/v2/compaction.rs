@@ -22,6 +22,10 @@ use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ThreadAutoHandoffNotification;
 use codex_app_server_protocol::ThreadCompactStartParams;
 use codex_app_server_protocol::ThreadCompactStartResponse;
+use codex_app_server_protocol::ThreadGoalGetParams;
+use codex_app_server_protocol::ThreadGoalGetResponse;
+use codex_app_server_protocol::ThreadGoalStatus;
+use codex_app_server_protocol::ThreadGoalUpdatedNotification;
 use codex_app_server_protocol::ThreadItem;
 use codex_app_server_protocol::ThreadStartParams;
 use codex_app_server_protocol::ThreadStartResponse;
@@ -30,8 +34,11 @@ use codex_app_server_protocol::TurnStartParams;
 use codex_app_server_protocol::TurnStartResponse;
 use codex_app_server_protocol::UserInput as V2UserInput;
 use codex_config::types::AuthCredentialsStoreMode;
+use codex_features::Feature;
+use codex_protocol::ThreadId;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
+use codex_state::StateRuntime;
 use core_test_support::responses;
 use core_test_support::skip_if_no_network;
 use pretty_assertions::assert_eq;
@@ -328,6 +335,127 @@ async fn auto_handoff_after_compaction_starts_replacement_thread() -> Result<()>
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn auto_handoff_after_compaction_preserves_active_goal() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+    const HANDOFF_AUTO_COMPACT_LIMIT: i64 = 200_000;
+
+    let server = responses::start_mock_server().await;
+    let sse1 = responses::sse(vec![
+        responses::ev_assistant_message("m1", "FIRST_REPLY"),
+        responses::ev_completed_with_tokens("r1", /*total_tokens*/ 120),
+    ]);
+    let sse2 = responses::sse(vec![
+        responses::ev_assistant_message("m3", "LOCAL_SUMMARY"),
+        responses::ev_completed_with_tokens("r3", /*total_tokens*/ 200),
+    ]);
+    let sse3 = responses::sse(vec![
+        responses::ev_assistant_message("m4", "GENERATED_HANDOFF_PROMPT"),
+        responses::ev_completed_with_tokens("r4", /*total_tokens*/ 120),
+    ]);
+    let sse4 = responses::sse(vec![
+        responses::ev_assistant_message("m5", "HANDOFF_REPLY"),
+        responses::ev_completed_with_tokens("r5", /*total_tokens*/ 120),
+    ]);
+    responses::mount_sse_sequence(&server, vec![sse1, sse2, sse3, sse4]).await;
+
+    let mut features = BTreeMap::new();
+    features.insert(Feature::Goals, true);
+    let codex_home = TempDir::new()?;
+    write_mock_responses_config_toml(
+        codex_home.path(),
+        &server.uri(),
+        &features,
+        HANDOFF_AUTO_COMPACT_LIMIT,
+        /*requires_openai_auth*/ None,
+        "mock_provider",
+        COMPACT_PROMPT,
+    )?;
+    append_auto_new_session_after_compactions(codex_home.path(), 1)?;
+
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let thread_id = start_thread(&mut mcp).await?;
+    send_turn_and_wait(&mut mcp, &thread_id, "first request").await?;
+    let state_db =
+        StateRuntime::init(codex_home.path().to_path_buf(), "mock_provider".into()).await?;
+    let state_thread_id = ThreadId::from_string(&thread_id)?;
+    let goal = state_db
+        .replace_thread_goal(
+            state_thread_id,
+            "finish auto handoff",
+            codex_state::ThreadGoalStatus::Active,
+            Some(10_000),
+        )
+        .await?;
+    let codex_state::ThreadGoalAccountingOutcome::Updated(_) = state_db
+        .account_thread_goal_usage(
+            state_thread_id,
+            /*time_delta_seconds*/ 12,
+            /*token_delta*/ 150,
+            codex_state::ThreadGoalAccountingMode::ActiveOnly,
+            Some(goal.goal_id.as_str()),
+        )
+        .await?
+    else {
+        unreachable!("active goal should account usage");
+    };
+    let accounted_goal = get_thread_goal(&mut mcp, &thread_id)
+        .await?
+        .expect("source goal should exist after direct accounting");
+    assert_eq!(accounted_goal.objective, "finish auto handoff");
+    assert_eq!(accounted_goal.status, ThreadGoalStatus::Active);
+    assert_eq!(accounted_goal.token_budget, Some(10_000));
+    assert_eq!(accounted_goal.tokens_used, 150);
+    assert_eq!(accounted_goal.time_used_seconds, 12);
+
+    let compact_id = mcp
+        .send_thread_compact_start_request(ThreadCompactStartParams {
+            thread_id: thread_id.clone(),
+        })
+        .await?;
+    let compact_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(compact_id)),
+    )
+    .await??;
+    let _compact: ThreadCompactStartResponse =
+        to_response::<ThreadCompactStartResponse>(compact_resp)?;
+
+    let completed = wait_for_context_compaction_completed(&mut mcp).await?;
+    assert_eq!(completed.thread_id, thread_id);
+
+    let handoff = wait_for_thread_auto_handoff(&mut mcp).await?;
+    assert_eq!(handoff.previous_thread_id, thread_id);
+    assert_ne!(handoff.thread.id, thread_id);
+    let copied_goal_snapshot = wait_for_thread_goal_updated(&mut mcp, &handoff.thread.id).await?;
+
+    assert_eq!(copied_goal_snapshot.thread_id, handoff.thread.id);
+    assert_eq!(copied_goal_snapshot.objective, accounted_goal.objective);
+    assert_eq!(copied_goal_snapshot.status, ThreadGoalStatus::Active);
+    assert_eq!(
+        copied_goal_snapshot.token_budget,
+        accounted_goal.token_budget
+    );
+    assert!(copied_goal_snapshot.tokens_used >= accounted_goal.tokens_used);
+    assert!(copied_goal_snapshot.time_used_seconds >= accounted_goal.time_used_seconds);
+    assert_eq!(copied_goal_snapshot.created_at, accounted_goal.created_at);
+    assert!(copied_goal_snapshot.updated_at >= accounted_goal.updated_at);
+
+    wait_for_turn_completed(&mut mcp, &handoff.turn_id).await?;
+    let replacement_goal = get_thread_goal(&mut mcp, &handoff.thread.id)
+        .await?
+        .expect("replacement should keep the copied goal after the handoff turn");
+    assert_eq!(replacement_goal.objective, accounted_goal.objective);
+    assert_eq!(replacement_goal.status, ThreadGoalStatus::Active);
+    assert_eq!(replacement_goal.token_budget, accounted_goal.token_budget);
+    assert!(replacement_goal.tokens_used >= copied_goal_snapshot.tokens_used);
+    assert!(replacement_goal.time_used_seconds >= copied_goal_snapshot.time_used_seconds);
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn thread_compact_start_rejects_invalid_thread_id() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
@@ -446,6 +574,50 @@ async fn send_turn_and_wait(mcp: &mut McpProcess, thread_id: &str, text: &str) -
     let TurnStartResponse { turn } = to_response::<TurnStartResponse>(turn_resp)?;
     wait_for_turn_completed(mcp, &turn.id).await?;
     Ok(turn.id)
+}
+
+async fn get_thread_goal(
+    mcp: &mut McpProcess,
+    thread_id: &str,
+) -> Result<Option<codex_app_server_protocol::ThreadGoal>> {
+    let request_id = mcp
+        .send_raw_request(
+            "thread/goal/get",
+            Some(serde_json::to_value(ThreadGoalGetParams {
+                thread_id: thread_id.to_string(),
+            })?),
+        )
+        .await?;
+    let response: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
+    )
+    .await??;
+    let ThreadGoalGetResponse { goal } = to_response(response)?;
+    Ok(goal)
+}
+
+async fn wait_for_thread_goal_updated(
+    mcp: &mut McpProcess,
+    thread_id: &str,
+) -> Result<codex_app_server_protocol::ThreadGoal> {
+    let notification: JSONRPCNotification = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_matching_notification("thread/goal/updated", |notification| {
+            notification.method == "thread/goal/updated"
+                && notification
+                    .params
+                    .as_ref()
+                    .and_then(|params| {
+                        serde_json::from_value::<ThreadGoalUpdatedNotification>(params.clone()).ok()
+                    })
+                    .is_some_and(|payload| payload.thread_id == thread_id)
+        }),
+    )
+    .await??;
+    let updated: ThreadGoalUpdatedNotification =
+        serde_json::from_value(notification.params.expect("thread/goal/updated params"))?;
+    Ok(updated.goal)
 }
 
 async fn wait_for_turn_completed(mcp: &mut McpProcess, turn_id: &str) -> Result<()> {

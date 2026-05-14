@@ -8,6 +8,7 @@ use crate::session::SessionSettingsUpdate;
 use crate::session::SteerInputError;
 use codex_features::Feature;
 use codex_otel::SessionTelemetry;
+use codex_protocol::ThreadId;
 use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::Personality;
@@ -496,6 +497,42 @@ impl CodexThread {
         self.codex.state_db()
     }
 
+    pub async fn ensure_state_thread_metadata(&self, thread_id: ThreadId) -> anyhow::Result<()> {
+        let Some(state_db) = self.state_db() else {
+            anyhow::bail!("thread {thread_id} has no state db");
+        };
+        let Some(rollout_path) = self.rollout_path() else {
+            anyhow::bail!("thread {thread_id} has no persisted rollout path");
+        };
+        let config_snapshot = self.config_snapshot().await;
+        let now = chrono::Utc::now();
+        let mut builder = codex_state::ThreadMetadataBuilder::new(
+            thread_id,
+            rollout_path,
+            now,
+            config_snapshot.session_source.clone(),
+        );
+        builder.updated_at = Some(now);
+        builder.thread_source = config_snapshot.thread_source;
+        builder.agent_nickname = config_snapshot.session_source.get_nickname();
+        builder.agent_role = config_snapshot.session_source.get_agent_role();
+        builder.agent_path = config_snapshot
+            .session_source
+            .get_agent_path()
+            .map(|path| path.to_string());
+        builder.model_provider = Some(config_snapshot.model_provider_id.clone());
+        builder.cwd = config_snapshot.cwd.as_path().to_path_buf();
+        builder.cli_version = Some(env!("CARGO_PKG_VERSION").to_string());
+        builder.sandbox_policy = config_snapshot.sandbox_policy();
+        builder.approval_mode = config_snapshot.approval_policy;
+
+        let mut metadata = builder.build(config_snapshot.model_provider_id.as_str());
+        metadata.model = Some(config_snapshot.model);
+        metadata.reasoning_effort = config_snapshot.reasoning_effort;
+        state_db.insert_thread_if_absent(&metadata).await?;
+        Ok(())
+    }
+
     pub async fn config_snapshot(&self) -> ThreadConfigSnapshot {
         self.codex.thread_config_snapshot().await
     }
@@ -536,6 +573,18 @@ impl CodexThread {
 
         let config = self.config().await.as_ref().clone();
         let environments = self.environment_selections().await;
+        let goal_snapshot_to_preserve = match self.state_db() {
+            Some(state_db) => match state_db.get_active_thread_goal(source_thread_id).await {
+                Ok(goal) => goal,
+                Err(err) => {
+                    tracing::warn!(
+                        "failed to read active goal before auto-handoff subagent replacement for {source_thread_id}: {err}"
+                    );
+                    None
+                }
+            },
+            None => None,
+        };
         let agent_control = self.codex.session.services.agent_control.clone();
         agent_control.shutdown_live_agent(source_thread_id).await?;
         let spawned = agent_control
@@ -553,6 +602,7 @@ impl CodexThread {
                 Some(source_config_snapshot.session_source),
                 SpawnAgentOptions {
                     environments: Some(environments),
+                    goal_snapshot_to_preserve,
                     ..Default::default()
                 },
             )

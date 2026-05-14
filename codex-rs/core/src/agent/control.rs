@@ -56,6 +56,7 @@ pub(crate) struct SpawnAgentOptions {
     pub(crate) fork_parent_spawn_call_id: Option<String>,
     pub(crate) fork_mode: Option<SpawnAgentForkMode>,
     pub(crate) environments: Option<Vec<TurnEnvironmentSelection>>,
+    pub(crate) goal_snapshot_to_preserve: Option<codex_state::ThreadGoal>,
 }
 
 #[derive(Clone, Debug)]
@@ -358,6 +359,39 @@ impl AgentControl {
             notification_source.as_ref(),
         )
         .await;
+
+        if let Some(goal) = options.goal_snapshot_to_preserve.as_ref() {
+            if let Some(state_db) = new_thread.thread.state_db() {
+                match new_thread
+                    .thread
+                    .ensure_state_thread_metadata(new_thread.thread_id)
+                    .await
+                {
+                    Ok(()) => {
+                        if let Err(err) = state_db
+                            .insert_thread_goal_snapshot(new_thread.thread_id, goal)
+                            .await
+                        {
+                            warn!(
+                                "failed to preserve goal for auto-handoff replacement {}: {err}",
+                                new_thread.thread_id
+                            );
+                        }
+                    }
+                    Err(err) => {
+                        warn!(
+                            "cannot preserve goal for auto-handoff replacement {} without persisted thread metadata: {err}",
+                            new_thread.thread_id
+                        );
+                    }
+                }
+            } else {
+                warn!(
+                    "cannot preserve goal for auto-handoff replacement {} without a state db",
+                    new_thread.thread_id
+                );
+            }
+        }
 
         let initial_turn_id = self
             .send_input(new_thread.thread_id, initial_operation)

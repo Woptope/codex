@@ -1949,6 +1949,163 @@ async fn resume_thread_subagent_restores_stored_nickname_and_role() {
 }
 
 #[tokio::test]
+async fn auto_handoff_children_only_with_subagents_subagent_replacement_preserves_goal() {
+    let (home, mut config) = test_config().await;
+    config
+        .features
+        .enable(Feature::Goals)
+        .expect("goals should be enableable in tests");
+    let state_db = init_state_db(&config).await;
+    let manager = ThreadManager::with_models_provider_home_and_state_for_tests(
+        CodexAuth::from_api_key("dummy"),
+        config.model_provider.clone(),
+        config.codex_home.to_path_buf(),
+        std::sync::Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
+        state_db.clone(),
+    );
+    let control = manager.agent_control();
+    let harness = AgentControlHarness {
+        _home: home,
+        config,
+        state_db,
+        manager,
+        control,
+    };
+    let (parent_thread_id, parent_thread) = harness.start_thread().await;
+    let agent_path = AgentPath::from_string("/root/explorer".to_string())
+        .expect("test agent path should be valid");
+
+    let child_thread_id = harness
+        .control
+        .spawn_agent(
+            harness.config.clone(),
+            text_input("hello child"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id,
+                depth: 1,
+                agent_path: Some(agent_path.clone()),
+                agent_nickname: Some("Scout".to_string()),
+                agent_role: Some("explorer".to_string()),
+            })),
+        )
+        .await
+        .expect("child spawn should succeed");
+    let child_thread = harness
+        .manager
+        .get_thread(child_thread_id)
+        .await
+        .expect("child thread should exist");
+    let state_db = child_thread
+        .state_db()
+        .expect("sqlite state db should be available");
+    timeout(Duration::from_secs(5), async {
+        loop {
+            if state_db
+                .get_thread(child_thread_id)
+                .await
+                .expect("child metadata query should succeed")
+                .is_some()
+            {
+                break;
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("child metadata should be persisted");
+
+    let goal = state_db
+        .replace_thread_goal(
+            child_thread_id,
+            "finish the delegated investigation",
+            codex_state::ThreadGoalStatus::Active,
+            Some(1_000),
+        )
+        .await
+        .expect("goal replacement should succeed");
+    let codex_state::ThreadGoalAccountingOutcome::Updated(goal) = state_db
+        .account_thread_goal_usage(
+            child_thread_id,
+            42,
+            123,
+            codex_state::ThreadGoalAccountingMode::ActiveOnly,
+            Some(goal.goal_id.as_str()),
+        )
+        .await
+        .expect("goal accounting should succeed")
+    else {
+        panic!("active goal should account usage");
+    };
+
+    let (replacement, turn_id) = child_thread
+        .start_auto_handoff_subagent_replacement("continue in replacement".to_string())
+        .await
+        .expect("auto-handoff subagent replacement should start");
+    assert_ne!(replacement.thread_id, child_thread_id);
+    assert!(!turn_id.is_empty());
+
+    let copied_goal = state_db
+        .get_thread_goal(replacement.thread_id)
+        .await
+        .expect("replacement goal read should succeed")
+        .expect("replacement should preserve active goal");
+    assert_eq!(replacement.thread_id, copied_goal.thread_id);
+    assert_eq!(goal.goal_id, copied_goal.goal_id);
+    assert_eq!(goal.objective, copied_goal.objective);
+    assert_eq!(goal.status, copied_goal.status);
+    assert_eq!(goal.token_budget, copied_goal.token_budget);
+    assert_eq!(goal.tokens_used, copied_goal.tokens_used);
+    assert_eq!(goal.time_used_seconds, copied_goal.time_used_seconds);
+
+    let replacement_snapshot = replacement.thread.config_snapshot().await;
+    let SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+        parent_thread_id: replacement_parent_thread_id,
+        depth,
+        agent_path: replacement_agent_path,
+        agent_nickname,
+        agent_role,
+    }) = replacement_snapshot.session_source
+    else {
+        panic!("replacement should remain a thread-spawn subagent");
+    };
+    assert_eq!(replacement_parent_thread_id, parent_thread_id);
+    assert_eq!(depth, 1);
+    assert_eq!(replacement_agent_path, Some(agent_path));
+    assert_eq!(agent_nickname.as_deref(), Some("Scout"));
+    assert_eq!(agent_role.as_deref(), Some("explorer"));
+
+    let expected = (
+        replacement.thread_id,
+        Op::UserInput {
+            environments: None,
+            items: vec![UserInput::Text {
+                text: "continue in replacement".to_string(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+            responsesapi_client_metadata: None,
+        },
+    );
+    assert!(
+        harness
+            .manager
+            .captured_ops()
+            .into_iter()
+            .any(|entry| entry == expected)
+    );
+
+    let _ = harness
+        .control
+        .shutdown_live_agent(replacement.thread_id)
+        .await
+        .expect("replacement shutdown should submit");
+    let _ = parent_thread
+        .submit(Op::Shutdown {})
+        .await
+        .expect("parent shutdown should submit");
+}
+
+#[tokio::test]
 async fn resume_agent_from_rollout_reads_archived_rollout_path() {
     let harness = AgentControlHarness::new().await;
     let child_thread_id = harness
